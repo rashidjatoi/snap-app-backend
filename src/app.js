@@ -11,6 +11,8 @@ const userRoutes = require('./routes/users');
 const snapRoutes = require('./routes/snaps');
 const subscriptionRoutes = require('./routes/subscriptions');
 const supportRoutes = require('./routes/support');
+const uploadRoutes = require('./routes/uploads');
+const { initFirebase } = require('./services/firebaseStorage');
 
 const adminUsers = require('./routes/admin/users');
 const adminModeration = require('./routes/admin/moderation');
@@ -57,6 +59,7 @@ function createApp() {
   app.use('/api/snaps', snapRoutes);
   app.use('/api/subscriptions', subscriptionRoutes);
   app.use('/api/support', supportRoutes);
+  app.use('/api/uploads', uploadRoutes);
 
   const admin = express.Router();
   admin.use(authRequired, adminRequired);
@@ -80,6 +83,11 @@ async function getApp() {
   if (!appPromise) {
     appPromise = (async () => {
       await connectDb();
+      try {
+        initFirebase();
+      } catch (err) {
+        console.warn('Firebase Storage not initialized:', err.message);
+      }
       return createApp();
     })();
   }

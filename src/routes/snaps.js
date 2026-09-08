@@ -1,9 +1,15 @@
 const express = require('express');
+const multer = require('multer');
 const { User, Snap, Comment, Report } = require('../models');
 const { authRequired } = require('../middleware/auth');
 const { ok, fail } = require('../utils/response');
+const { uploadBuffer } = require('../services/firebaseStorage');
 
 const router = express.Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 30 * 1024 * 1024 },
+});
 
 router.get('/', authRequired, async (req, res) => {
   try {
@@ -28,11 +34,28 @@ router.get('/feed', authRequired, async (req, res) => {
   }
 });
 
-router.post('/', authRequired, async (req, res) => {
+router.post('/', authRequired, upload.single('file'), async (req, res) => {
   try {
-    const { partnerId, type, mediaUrl, thumbnailUrl, caption } = req.body || {};
+    const body = req.body || {};
+    const partnerId = body.partnerId;
+    const type = body.type || (req.file?.mimetype?.startsWith('video/') ? 'video' : 'photo');
+    let mediaUrl = body.mediaUrl;
+    let thumbnailUrl = body.thumbnailUrl;
+    const caption = body.caption || '';
+
+    if (req.file) {
+      const uploaded = await uploadBuffer(req.file.buffer, {
+        folder: 'snaps',
+        filename: req.file.originalname,
+        contentType: req.file.mimetype,
+        userId: req.user._id.toString(),
+      });
+      mediaUrl = uploaded.url;
+      thumbnailUrl = thumbnailUrl || uploaded.url;
+    }
+
     if (!partnerId || !type || !mediaUrl) {
-      return fail(res, 400, 'partnerId, type, and mediaUrl are required');
+      return fail(res, 400, 'partnerId, type, and mediaUrl (or file) are required');
     }
     if (!['photo', 'video'].includes(type)) {
       return fail(res, 400, 'type must be photo or video');
@@ -47,13 +70,13 @@ router.post('/', authRequired, async (req, res) => {
       type,
       mediaUrl,
       thumbnailUrl: thumbnailUrl || mediaUrl,
-      caption: caption || '',
+      caption,
       status: 'published',
     });
     return ok(res, { snap: snap.toJSONSafe() });
   } catch (err) {
     console.error(err);
-    return fail(res, 500, 'Failed to create snap');
+    return fail(res, 500, err.message || 'Failed to create snap');
   }
 });
 

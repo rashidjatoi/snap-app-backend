@@ -5,3 +5,7 @@ src/data/db.json
 .DS_Store
 .idea/
 *.iml
+.vercel
+*firebase-adminsdk*.json
+*-firebase-adminsdk-*.json
+

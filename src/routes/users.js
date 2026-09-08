@@ -1,9 +1,15 @@
 const express = require('express');
+const multer = require('multer');
 const { User, Snap } = require('../models');
 const { authRequired, publicUser } = require('../middleware/auth');
 const { ok, fail } = require('../utils/response');
+const { uploadBuffer } = require('../services/firebaseStorage');
 
 const router = express.Router();
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 async function buildProfile(user) {
   const snaps = await Snap.find({
@@ -111,6 +117,30 @@ router.patch('/profile', authRequired, updateProfileHandler);
 router.patch('/me', authRequired, updateProfileHandler);
 router.patch('/preferences', authRequired, updatePreferencesHandler);
 router.patch('/me/preferences', authRequired, updatePreferencesHandler);
+
+router.post('/avatar', authRequired, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return fail(res, 400, 'file is required');
+    const uploaded = await uploadBuffer(req.file.buffer, {
+      folder: 'avatars',
+      filename: req.file.originalname,
+      contentType: req.file.mimetype,
+      userId: req.user._id.toString(),
+    });
+    req.user.avatarUrl = uploaded.url;
+    req.user.lastActiveAt = new Date();
+    await req.user.save();
+    const profile = await buildProfile(req.user);
+    return ok(res, {
+      url: uploaded.url,
+      user: profile,
+      profile,
+    });
+  } catch (err) {
+    console.error('Avatar upload failed', err);
+    return fail(res, 500, err.message || 'Avatar upload failed');
+  }
+});
 
 router.post('/linked-accounts/:provider', authRequired, async (req, res) => {
   try {
