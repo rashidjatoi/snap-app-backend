@@ -120,9 +120,14 @@ router.post('/guest', async (req, res) => {
 
 router.post('/social', async (req, res) => {
   try {
-    const { provider, idToken } = req.body || {};
+    const { provider, idToken, fullName, email: clientEmail } = req.body || {};
     if (!provider || !idToken) {
       return fail(res, 400, 'provider and idToken are required');
+    }
+
+    const providerKey = String(provider).toLowerCase();
+    if (!['google', 'apple'].includes(providerKey)) {
+      return fail(res, 400, 'provider must be google or apple');
     }
 
     const { initFirebase } = require('../services/firebaseStorage');
@@ -133,57 +138,84 @@ router.post('/social', async (req, res) => {
     try {
       decoded = await admin.auth().verifyIdToken(String(idToken));
     } catch (err) {
-      return fail(res, 401, 'Invalid social idToken');
+      console.error('verifyIdToken failed:', err.message);
+      return fail(res, 401, 'Invalid Firebase idToken');
     }
 
-    const socialEmail = String(decoded.email || '').toLowerCase();
-    if (!socialEmail) {
-      return fail(res, 400, 'Social account has no email');
+    const firebaseUid = decoded.uid;
+    if (!firebaseUid) {
+      return fail(res, 401, 'Firebase token missing uid');
     }
+
+    const tokenProvider =
+      decoded.firebase?.sign_in_provider ||
+      (decoded.firebase?.identities &&
+        Object.keys(decoded.firebase.identities)[0]) ||
+      providerKey;
+
+    // Prefer verified email from Firebase; Apple may omit it after first login.
+    const socialEmail = String(
+      decoded.email || clientEmail || `${providerKey}_${firebaseUid}@users.snapapp.local`,
+    ).toLowerCase();
 
     const name =
+      (fullName && String(fullName).trim()) ||
       decoded.name ||
       [decoded.given_name, decoded.family_name].filter(Boolean).join(' ') ||
-      `${provider} user`;
+      (providerKey === 'apple' ? 'Apple User' : 'Google User');
 
-    let user = await User.findOne({ email: socialEmail });
+    let user =
+      (await User.findOne({ firebaseUid })) ||
+      (await User.findOne({ email: socialEmail }));
+
     if (!user) {
       const username = usernameFromName(name, socialEmail);
       user = await User.create({
         email: socialEmail,
+        firebaseUid,
         passwordHash: await bcrypt.hash(uuid(), 10),
         displayName: name,
         username,
         role: 'user',
         status: 'active',
-        verified: true,
+        verified: !!decoded.email_verified || providerKey === 'apple',
         lastActiveAt: new Date(),
         avatarUrl: decoded.picture || null,
         linkedAccounts: [
-          { provider: String(provider).toLowerCase(), connected: true },
+          { provider: providerKey, connected: true },
           { provider: 'instagram', connected: false },
           { provider: 'whatsapp', connected: false },
         ],
       });
     } else {
-      const linked = user.linkedAccounts || [];
-      const providerKey = String(provider).toLowerCase();
+      user.firebaseUid = user.firebaseUid || firebaseUid;
+      if (!user.avatarUrl && decoded.picture) {
+        user.avatarUrl = decoded.picture;
+      }
+      if (fullName && String(fullName).trim() && (!user.displayName || user.displayName.endsWith('User'))) {
+        user.displayName = String(fullName).trim();
+      }
+      const linked = Array.isArray(user.linkedAccounts) ? [...user.linkedAccounts] : [];
       if (!linked.some((a) => a.provider === providerKey && a.connected)) {
         linked.push({ provider: providerKey, connected: true });
         user.linkedAccounts = linked;
       }
-      if (!user.avatarUrl && decoded.picture) {
-        user.avatarUrl = decoded.picture;
-      }
+      user.verified = true;
     }
+
     user.lastActiveAt = new Date();
     await user.save();
+
     const token = signToken(user);
     return ok(res, {
       token,
       accessToken: token,
       refreshToken: token,
       user: publicUser(user),
+      firebase: {
+        uid: firebaseUid,
+        signInProvider: tokenProvider,
+      },
     });
   } catch (err) {
     console.error(err);
