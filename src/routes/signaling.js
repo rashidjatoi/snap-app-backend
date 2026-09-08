@@ -1,0 +1,115 @@
+const { v4: uuid } = require('uuid');
+const { authRequired } = require('../middleware/auth');
+const { ok, fail } = require('../utils/response');
+const { Session } = require('../models');
+
+/**
+ * WebRTC signaling over REST (works on Vercel serverless).
+ * Socket.IO (when available on long-running Node) mirrors the same events.
+ */
+function attachSignalRoutes(router, { broadcast } = {}) {
+  async function loadParticipantSession(req, res) {
+    const session = await Session.findById(req.params.sessionId);
+    if (!session) {
+      fail(res, 404, 'Session not found', 'SESSION_NOT_FOUND');
+      return null;
+    }
+    const uid = String(req.user._id);
+    const isHost = String(session.hostId) === uid;
+    const isGuest = session.guestId && String(session.guestId) === uid;
+    if (!isHost && !isGuest) {
+      fail(res, 403, 'Not a session participant');
+      return null;
+    }
+    return session;
+  }
+
+  router.post('/:sessionId/signal', authRequired, async (req, res) => {
+    try {
+      const session = await loadParticipantSession(req, res);
+      if (!session) return;
+
+      const type = String(req.body?.type || '').trim();
+      if (!type) return fail(res, 400, 'type is required', 'VALIDATION_ERROR');
+
+      const fromUserId = String(req.user._id);
+      const signal = {
+        signalId: `sig_${uuid().replace(/-/g, '').slice(0, 12)}`,
+        type,
+        fromUserId,
+        payload: req.body?.payload || {},
+        createdAt: new Date(),
+      };
+
+      // Keep a bounded buffer for ICE/offer churn.
+      session.signals = [...(session.signals || []), signal].slice(-200);
+
+      if (type === 'peer.ready') {
+        const ready = new Set(session.readyUserIds || []);
+        ready.add(fromUserId);
+        session.readyUserIds = [...ready];
+        if (session.status === 'paired' || session.status === 'ready_to_pair') {
+          session.status = 'live';
+        }
+      }
+
+      if (type === 'peer.left') {
+        session.readyUserIds = (session.readyUserIds || []).filter((id) => id !== fromUserId);
+      }
+
+      await session.save();
+
+      if (typeof broadcast === 'function') {
+        broadcast(session._id.toString(), {
+          ...signal,
+          sessionId: session._id.toString(),
+        }, fromUserId);
+      }
+
+      return ok(res, {
+        signalId: signal.signalId,
+        readyUserIds: session.readyUserIds,
+        status: session.status,
+      });
+    } catch (err) {
+      console.error(err);
+      return fail(res, 500, err.message || 'Signal failed');
+    }
+  });
+
+  router.get('/:sessionId/signals', authRequired, async (req, res) => {
+    try {
+      const session = await loadParticipantSession(req, res);
+      if (!session) return;
+
+      const after = req.query.after ? new Date(String(req.query.after)) : null;
+      const uid = String(req.user._id);
+      let messages = session.signals || [];
+      if (after && !Number.isNaN(after.getTime())) {
+        messages = messages.filter((m) => new Date(m.createdAt) > after);
+      }
+      // Never echo own messages to the same client.
+      messages = messages.filter((m) => m.fromUserId !== uid);
+
+      return ok(res, {
+        sessionId: session._id.toString(),
+        status: session.status,
+        readyUserIds: session.readyUserIds || [],
+        hostId: session.hostId.toString(),
+        guestId: session.guestId ? session.guestId.toString() : null,
+        messages: messages.map((m) => ({
+          signalId: m.signalId,
+          type: m.type,
+          fromUserId: m.fromUserId,
+          payload: m.payload,
+          createdAt: new Date(m.createdAt).toISOString(),
+        })),
+        serverTime: new Date().toISOString(),
+      });
+    } catch (err) {
+      return fail(res, 500, err.message || 'Signals failed');
+    }
+  });
+}
+
+module.exports = { attachSignalRoutes };

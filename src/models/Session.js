@@ -13,6 +13,17 @@ const captureSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const signalSchema = new mongoose.Schema(
+  {
+    signalId: { type: String, required: true },
+    type: { type: String, required: true },
+    fromUserId: { type: String, required: true },
+    payload: { type: mongoose.Schema.Types.Mixed, default: {} },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
+
 const sessionSchema = new mongoose.Schema(
   {
     syncCode: { type: String, required: true, unique: true, uppercase: true, index: true },
@@ -38,6 +49,8 @@ const sessionSchema = new mongoose.Schema(
     signalingToken: { type: String, required: true },
     expiresAt: { type: Date, required: true },
     captures: { type: [captureSchema], default: [] },
+    signals: { type: [signalSchema], default: [] },
+    readyUserIds: { type: [String], default: [] },
     activeStitchJobId: { type: String, default: null },
     endedAt: { type: Date, default: null },
   },

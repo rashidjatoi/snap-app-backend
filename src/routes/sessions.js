@@ -15,11 +15,23 @@ const {
   stitchJobDto,
   advanceStitchJob,
 } = require('../services/sessionService');
+const { attachSignalRoutes } = require('./signaling');
 
 const router = express.Router();
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 40 * 1024 * 1024 },
+});
+
+let _broadcast = null;
+function setSignalBroadcast(fn) {
+  _broadcast = fn;
+}
+
+attachSignalRoutes(router, {
+  broadcast: (...args) => {
+    if (typeof _broadcast === 'function') _broadcast(...args);
+  },
 });
 
 router.post('/', authRequired, async (req, res) => {
@@ -272,4 +284,5 @@ router.post(
   },
 );
 
+router.setSignalBroadcast = setSignalBroadcast;
 module.exports = router;
