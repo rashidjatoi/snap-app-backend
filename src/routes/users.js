@@ -145,14 +145,53 @@ router.post('/avatar', authRequired, upload.single('file'), async (req, res) => 
 router.post('/linked-accounts/:provider', authRequired, async (req, res) => {
   try {
     const provider = String(req.params.provider).toLowerCase();
+    if (!['instagram', 'whatsapp'].includes(provider)) {
+      return fail(res, 400, 'provider must be instagram or whatsapp');
+    }
     const connected = req.body?.connected !== false;
-    const list = req.user.linkedAccounts || [];
+    let handle = String(req.body?.handle || req.body?.username || req.body?.phone || '')
+      .trim();
+    if (provider === 'instagram') {
+      handle = handle.replace(/^@/, '');
+      if (connected && !handle) {
+        return fail(res, 400, 'Instagram username (handle) is required');
+      }
+    }
+    if (provider === 'whatsapp') {
+      handle = handle.replace(/[^\d]/g, '');
+      if (connected && (handle.length < 8 || handle.length > 15)) {
+        return fail(res, 400, 'WhatsApp number with country code is required');
+      }
+    }
+
+    const list = Array.isArray(req.user.linkedAccounts)
+      ? [...req.user.linkedAccounts]
+      : [];
     const existing = list.find((a) => a.provider === provider);
-    if (existing) existing.connected = connected;
-    else list.push({ provider, connected });
+    if (existing) {
+      existing.connected = connected;
+      existing.handle = connected ? handle : null;
+    } else {
+      list.push({
+        provider,
+        connected,
+        handle: connected ? handle : null,
+      });
+    }
+    // Ensure both providers always present in profile.
+    for (const p of ['instagram', 'whatsapp']) {
+      if (!list.some((a) => a.provider === p)) {
+        list.push({ provider: p, connected: false, handle: null });
+      }
+    }
     req.user.linkedAccounts = list;
     await req.user.save();
-    return ok(res, { provider, connected });
+    const saved = list.find((a) => a.provider === provider);
+    return ok(res, {
+      provider,
+      connected: !!saved?.connected,
+      handle: saved?.handle || null,
+    });
   } catch (err) {
     console.error(err);
     return fail(res, 500, 'Failed to update linked account');
@@ -162,13 +201,19 @@ router.post('/linked-accounts/:provider', authRequired, async (req, res) => {
 router.delete('/linked-accounts/:provider', authRequired, async (req, res) => {
   try {
     const provider = String(req.params.provider).toLowerCase();
-    const list = req.user.linkedAccounts || [];
+    const list = Array.isArray(req.user.linkedAccounts)
+      ? [...req.user.linkedAccounts]
+      : [];
     const existing = list.find((a) => a.provider === provider);
-    if (existing) existing.connected = false;
-    else list.push({ provider, connected: false });
+    if (existing) {
+      existing.connected = false;
+      existing.handle = null;
+    } else {
+      list.push({ provider, connected: false, handle: null });
+    }
     req.user.linkedAccounts = list;
     await req.user.save();
-    return ok(res, { provider, connected: false });
+    return ok(res, { provider, connected: false, handle: null });
   } catch (err) {
     console.error(err);
     return fail(res, 500, 'Failed to unlink account');

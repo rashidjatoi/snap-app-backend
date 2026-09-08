@@ -4,6 +4,7 @@ const linkedAccountSchema = new mongoose.Schema(
   {
     provider: { type: String, required: true },
     connected: { type: Boolean, default: false },
+    handle: { type: String, default: null },
   },
   { _id: false },
 );
@@ -95,6 +96,7 @@ userSchema.methods.toPublic = function toPublic() {
     linkedAccounts: (this.linkedAccounts || []).map((a) => ({
       provider: a.provider,
       connected: a.connected,
+      handle: a.handle || null,
     })),
     createdAt: this.createdAt,
     lastActiveAt: this.lastActiveAt,
