@@ -16,6 +16,7 @@ const poseSchema = new mongoose.Schema(
     ownerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     mediaType: { type: String, enum: ['photo', 'video'], required: true },
     mediaUrl: { type: String, required: true },
+    peerMediaUrl: { type: String, default: null },
     thumbnailUrl: { type: String, default: null },
     durationSec: { type: Number, default: null },
     layout: { type: String, default: 'split_screen' },

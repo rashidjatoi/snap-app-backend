@@ -5,7 +5,6 @@ const {
   StitchJob,
   Pose,
   User,
-  UserNotification,
 } = require('../models');
 
 const codeAlphabet = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ23456789', 6);
@@ -84,25 +83,7 @@ async function joinedPayload(session) {
   };
 }
 
-async function notifyUser({
-  userId,
-  type,
-  title,
-  body,
-  actions = [],
-  payload = {},
-  actor = null,
-}) {
-  return UserNotification.create({
-    userId,
-    type,
-    title,
-    body,
-    actions,
-    payload,
-    actor,
-  });
-}
+const { notifyUser } = require('./pushNotify');
 
 function greetingForNow(date = new Date()) {
   const h = date.getHours();
@@ -133,92 +114,146 @@ function createdAtLabel(date) {
 async function advanceStitchJob(job) {
   if (!job || job.status === 'completed' || job.status === 'failed') return job;
 
+  const session = await Session.findById(job.sessionId);
+  if (!session) {
+    job.status = 'failed';
+    job.errorCode = 'SESSION_NOT_FOUND';
+    job.message = 'Session missing';
+    await job.save();
+    return job;
+  }
+
+  const captures = session.captures || [];
+  const needsBoth = !!session.guestId;
+  if (needsBoth && captures.length < 2) {
+    job.status = 'pending';
+    job.progress = Math.min(40, 10 + captures.length * 15);
+    job.message = 'Waiting for both cameras…';
+    await job.save();
+    return job;
+  }
+  if (!captures.length) {
+    job.status = 'failed';
+    job.errorCode = 'PEER_MEDIA_MISSING';
+    job.message = 'No capture media available';
+    await job.save();
+    return job;
+  }
+
   const elapsed = Date.now() - new Date(job.startedAt || job.createdAt).getTime();
 
-  if (elapsed < 900) {
+  if (elapsed < 800) {
     job.status = 'pending';
-    job.progress = Math.min(25, 8 + Math.floor(elapsed / 40));
+    job.progress = Math.min(35, 12 + Math.floor(elapsed / 30));
     job.message = 'Uploading captures…';
-  } else if (elapsed < 2200) {
+    await job.save();
+    return job;
+  }
+
+  if (elapsed < 1600) {
     job.status = 'processing';
-    job.progress = Math.min(87, 40 + Math.floor((elapsed - 900) / 30));
+    job.progress = Math.min(80, 40 + Math.floor((elapsed - 800) / 20));
     job.message = 'Stitching Your Shared Pose...';
-  } else {
-    // Complete: create Pose from session captures
-    const session = await Session.findById(job.sessionId);
-    if (!session) {
-      job.status = 'failed';
-      job.errorCode = 'SESSION_NOT_FOUND';
-      job.message = 'Session missing';
-      await job.save();
-      return job;
-    }
+    await job.save();
+    return job;
+  }
 
-    const captures = session.captures || [];
-    if (!captures.length) {
-      job.status = 'failed';
-      job.errorCode = 'PEER_MEDIA_MISSING';
-      job.message = 'No capture media available';
-      await job.save();
-      return job;
-    }
+  // Resolve host/guest capture URLs
+  const hostCap =
+    captures.find((c) => String(c.userId) === String(session.hostId)) ||
+    captures[0];
+  const guestCap =
+    captures.find((c) => String(c.userId) === String(session.guestId)) ||
+    captures[1] ||
+    hostCap;
 
-    const primary = captures[0];
-    const mediaUrl = primary.mediaUrl;
-    const mediaType = job.mediaType || primary.mediaType;
-    const [host, guest] = await Promise.all([
-      User.findById(session.hostId),
-      session.guestId ? User.findById(session.guestId) : null,
-    ]);
-    const partners = [participantDto(host), participantDto(guest)].filter(Boolean);
-    const guestName = guest?.displayName || 'Partner';
-    const partnersLabel = `You & ${guestName}`;
-    const poseId = `pose_${uuid().replace(/-/g, '').slice(0, 12)}`;
-    const shareUrl = `https://holdpose.app/p/${poseId}`;
-    const durationSec =
-      mediaType === 'video' && primary.durationMs
-        ? Math.min(30, Math.round(primary.durationMs / 1000))
-        : null;
+  const mediaType = job.mediaType || hostCap.mediaType || 'photo';
+  let mediaUrl = hostCap.mediaUrl;
 
-    const pose = await Pose.create({
-      poseId,
-      sessionId: session._id,
-      ownerIds: [session.hostId, session.guestId].filter(Boolean),
-      mediaType,
-      mediaUrl,
-      thumbnailUrl: mediaUrl,
-      durationSec,
-      layout: 'split_screen',
-      videoStrategy: 'flag_unconfirmed',
-      partners,
-      partnersLabel,
-      shareUrl,
-      confirmed: false,
-    });
+  let peerMediaUrl = null;
+  let videoStrategy = 'split_screen';
 
-    job.status = 'completed';
-    job.progress = 100;
-    job.message = 'Your Pose is Ready';
-    job.poseId = pose.poseId;
-    job.previewUrl = mediaUrl;
-    job.shareUrl = shareUrl;
-    job.partnersLabel = partnersLabel;
-    job.completedAt = new Date();
-    session.status = 'completed';
-    session.activeStitchJobId = job.jobId;
-    await session.save();
-
-    // Notify both peers
-    for (const uid of [session.hostId, session.guestId].filter(Boolean)) {
-      await notifyUser({
-        userId: uid,
-        type: 'pose_processed',
-        title: 'Your Pose is Ready',
-        body: 'Your shared dual-camera moment is ready to review.',
-        actions: [],
-        payload: { poseId: pose.poseId },
+  if (mediaType === 'photo' && guestCap && guestCap.mediaUrl !== hostCap.mediaUrl) {
+    try {
+      const { stitchPhotosSideBySide } = require('./mediaStitch');
+      mediaUrl = await stitchPhotosSideBySide({
+        hostUrl: hostCap.mediaUrl,
+        guestUrl: guestCap.mediaUrl,
+        userId: session.hostId.toString(),
       });
+      videoStrategy = 'split_screen';
+    } catch (err) {
+      console.error('Photo stitch failed, using host capture:', err.message);
+      mediaUrl = hostCap.mediaUrl;
+      peerMediaUrl = guestCap.mediaUrl;
+      videoStrategy = 'dual_peer';
     }
+  }
+
+  // Dual video: both peer recordings kept; client can play split / host primary.
+  if (mediaType === 'video') {
+    mediaUrl = hostCap.mediaUrl;
+    if (guestCap && guestCap.mediaUrl && guestCap.mediaUrl !== hostCap.mediaUrl) {
+      peerMediaUrl = guestCap.mediaUrl;
+      videoStrategy = 'dual_peer';
+    } else {
+      videoStrategy = 'host_primary';
+    }
+  }
+
+  const [host, guest] = await Promise.all([
+    User.findById(session.hostId),
+    session.guestId ? User.findById(session.guestId) : null,
+  ]);
+  const partners = [participantDto(host), participantDto(guest)].filter(Boolean);
+  const guestName = guest?.displayName || 'Partner';
+  const partnersLabel = `You & ${guestName}`;
+  const poseId = `pose_${uuid().replace(/-/g, '').slice(0, 12)}`;
+  const shareUrl = `https://holdpose.app/p/${poseId}`;
+  const durationSec =
+    mediaType === 'video' && hostCap.durationMs
+      ? Math.min(30, Math.round(hostCap.durationMs / 1000))
+      : null;
+
+  const pose = await Pose.create({
+    poseId,
+    sessionId: session._id,
+    ownerIds: [session.hostId, session.guestId].filter(Boolean),
+    mediaType,
+    mediaUrl,
+    peerMediaUrl,
+    thumbnailUrl: mediaUrl,
+    durationSec,
+    layout: 'split_screen',
+    videoStrategy,
+    partners,
+    partnersLabel,
+    shareUrl,
+    confirmed: false,
+  });
+
+  job.status = 'completed';
+  job.progress = 100;
+  job.message = 'Your Pose is Ready';
+  job.poseId = pose.poseId;
+  job.previewUrl = mediaUrl;
+  job.peerMediaUrl = peerMediaUrl;
+  job.shareUrl = shareUrl;
+  job.partnersLabel = partnersLabel;
+  job.completedAt = new Date();
+  session.status = 'completed';
+  session.activeStitchJobId = job.jobId;
+  await session.save();
+
+  for (const uid of [session.hostId, session.guestId].filter(Boolean)) {
+    await notifyUser({
+      userId: uid,
+      type: 'pose_processed',
+      title: 'Your Pose is Ready',
+      body: 'Your shared dual-camera moment is ready to review.',
+      actions: [],
+      payload: { poseId: pose.poseId },
+    });
   }
 
   await job.save();
@@ -233,6 +268,29 @@ async function ensureStitchJobForSession(session) {
 
   const captures = session.captures || [];
   if (!captures.length) return null;
+
+  // Dual-device sessions must wait for both peer uploads before creating a job
+  // that can complete; still create a waiting job so clients can poll.
+  const needsBoth = !!session.guestId;
+  if (needsBoth && captures.length < 2) {
+    const mediaType = captures[0].mediaType || 'photo';
+    const jobId = `job_${uuid().replace(/-/g, '').slice(0, 10)}`;
+    const job = await StitchJob.create({
+      jobId,
+      sessionId: session._id,
+      status: 'pending',
+      progress: 18,
+      message: 'Waiting for both cameras…',
+      mediaType,
+      layout: 'split_screen',
+      videoStrategy: 'flag_unconfirmed',
+      startedAt: new Date(),
+    });
+    session.activeStitchJobId = jobId;
+    session.status = 'uploading';
+    await session.save();
+    return job;
+  }
 
   const mediaType = captures[0].mediaType || 'photo';
   const jobId = `job_${uuid().replace(/-/g, '').slice(0, 10)}`;
@@ -262,6 +320,7 @@ function stitchJobDto(job) {
     message: job.message,
     poseId: job.poseId,
     previewUrl: job.previewUrl,
+    peerMediaUrl: job.peerMediaUrl || null,
     mediaType: job.mediaType,
     layout: job.layout,
     videoStrategy: job.videoStrategy,
@@ -289,6 +348,8 @@ function poseListItem(pose, userId) {
     mediaType: pose.mediaType,
     durationSec: pose.durationSec,
     thumbnailUrl: pose.thumbnailUrl || pose.mediaUrl,
+    mediaUrl: pose.mediaUrl,
+    peerMediaUrl: pose.peerMediaUrl || null,
     partnerName: other?.fullName || 'Partner',
     partnerAvatarUrl: other?.avatarUrl || null,
     partner: other

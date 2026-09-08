@@ -265,6 +265,20 @@ router.post(
       session.status = 'uploading';
       await session.save();
 
+      // If a waiting stitch job exists and both peers uploaded, allow it to progress.
+      if (session.activeStitchJobId && session.captures.length >= 2) {
+        const { StitchJob } = require('../models');
+        const waiting = await StitchJob.findOne({ jobId: session.activeStitchJobId });
+        if (waiting && waiting.status === 'pending') {
+          waiting.startedAt = new Date();
+          waiting.message = 'Uploading captures…';
+          waiting.progress = 25;
+          await waiting.save();
+          session.status = 'stitching';
+          await session.save();
+        }
+      }
+
       // MVP: start stitch when at least one capture exists (supports single-device).
       // When both peers upload, stitch uses available media.
       const job = await ensureStitchJobForSession(session);

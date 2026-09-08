@@ -16,6 +16,7 @@ const stitchJobSchema = new mongoose.Schema(
     videoStrategy: { type: String, default: 'flag_unconfirmed' },
     poseId: { type: String, default: null },
     previewUrl: { type: String, default: null },
+    peerMediaUrl: { type: String, default: null },
     shareUrl: { type: String, default: null },
     partnersLabel: { type: String, default: 'You & Partner' },
     errorCode: { type: String, default: null },

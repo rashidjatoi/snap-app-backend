@@ -54,6 +54,7 @@ const userSchema = new mongoose.Schema(
     },
     resetToken: { type: String, default: null },
     resetTokenExpiresAt: { type: Date, default: null },
+    fcmTokens: { type: [String], default: [] },
     lastActiveAt: { type: Date, default: Date.now },
   },
   { timestamps: { createdAt: true, updatedAt: true } },

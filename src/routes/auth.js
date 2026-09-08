@@ -120,18 +120,37 @@ router.post('/guest', async (req, res) => {
 
 router.post('/social', async (req, res) => {
   try {
-    const { provider, idToken, email, fullName } = req.body || {};
+    const { provider, idToken } = req.body || {};
     if (!provider || !idToken) {
       return fail(res, 400, 'provider and idToken are required');
     }
-    const socialEmail =
-      email || `${provider}_${String(idToken).slice(0, 8)}@social.snapapp.local`;
-    let user = await User.findOne({ email: String(socialEmail).toLowerCase() });
+
+    const { initFirebase } = require('../services/firebaseStorage');
+    const admin = require('firebase-admin');
+    initFirebase();
+
+    let decoded;
+    try {
+      decoded = await admin.auth().verifyIdToken(String(idToken));
+    } catch (err) {
+      return fail(res, 401, 'Invalid social idToken');
+    }
+
+    const socialEmail = String(decoded.email || '').toLowerCase();
+    if (!socialEmail) {
+      return fail(res, 400, 'Social account has no email');
+    }
+
+    const name =
+      decoded.name ||
+      [decoded.given_name, decoded.family_name].filter(Boolean).join(' ') ||
+      `${provider} user`;
+
+    let user = await User.findOne({ email: socialEmail });
     if (!user) {
-      const name = fullName || `${provider} user`;
       const username = usernameFromName(name, socialEmail);
       user = await User.create({
-        email: String(socialEmail).toLowerCase(),
+        email: socialEmail,
         passwordHash: await bcrypt.hash(uuid(), 10),
         displayName: name,
         username,
@@ -139,12 +158,23 @@ router.post('/social', async (req, res) => {
         status: 'active',
         verified: true,
         lastActiveAt: new Date(),
+        avatarUrl: decoded.picture || null,
         linkedAccounts: [
-          { provider: provider.toLowerCase(), connected: true },
+          { provider: String(provider).toLowerCase(), connected: true },
           { provider: 'instagram', connected: false },
           { provider: 'whatsapp', connected: false },
         ],
       });
+    } else {
+      const linked = user.linkedAccounts || [];
+      const providerKey = String(provider).toLowerCase();
+      if (!linked.some((a) => a.provider === providerKey && a.connected)) {
+        linked.push({ provider: providerKey, connected: true });
+        user.linkedAccounts = linked;
+      }
+      if (!user.avatarUrl && decoded.picture) {
+        user.avatarUrl = decoded.picture;
+      }
     }
     user.lastActiveAt = new Date();
     await user.save();

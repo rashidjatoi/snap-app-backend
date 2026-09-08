@@ -74,6 +74,7 @@ function createApp() {
     app.use(`${base}/home`, homeRoutes);
     app.use(`${base}/notifications`, userNotificationRoutes);
     app.use(`${base}/pair-requests`, pairRequestRoutes);
+    app.use(`${base}/devices`, require('./routes/devices'));
   }
 
   // Mobile contract uses /api/v1/*; existing clients use /api/*
