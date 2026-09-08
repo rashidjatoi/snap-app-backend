@@ -1,9 +1,10 @@
 const express = require('express');
 const multer = require('multer');
-const { User, Snap } = require('../models');
+const { User, Snap, Pose, Session } = require('../models');
 const { authRequired, publicUser } = require('../middleware/auth');
 const { ok, fail } = require('../utils/response');
 const { uploadBuffer } = require('../services/firebaseStorage');
+const { createdAtLabel } = require('../services/sessionService');
 
 const router = express.Router();
 const upload = multer({
@@ -12,27 +13,32 @@ const upload = multer({
 });
 
 async function buildProfile(user) {
-  const snaps = await Snap.find({
-    $or: [{ ownerId: user._id }, { partnerId: user._id }],
-    status: { $ne: 'removed' },
+  const me = user._id;
+  const posesCount = await Pose.countDocuments({
+    ownerIds: me,
+    confirmed: true,
   });
+  const sessionsCount = await Session.countDocuments({
+    $or: [{ hostId: me }, { guestId: me }],
+  });
+  const pairedSessions = await Session.find({
+    $or: [{ hostId: me }, { guestId: me }],
+    guestId: { $ne: null },
+  }).select('hostId guestId');
   const partnerIds = new Set();
-  snaps.forEach((s) => {
-    const owner = s.ownerId.toString();
-    const partner = s.partnerId.toString();
-    const me = user._id.toString();
-    if (owner !== me) partnerIds.add(owner);
-    if (partner !== me) partnerIds.add(partner);
-  });
+  for (const s of pairedSessions) {
+    const other = String(s.hostId) === String(me) ? s.guestId : s.hostId;
+    if (other) partnerIds.add(String(other));
+  }
 
   const base = publicUser(user);
   return {
     ...base,
     fullName: user.displayName,
     stats: {
-      poses: snaps.length,
+      poses: posesCount,
       partners: partnerIds.size,
-      sessions: snaps.length,
+      sessions: sessionsCount,
     },
   };
 }
@@ -266,6 +272,115 @@ router.get('/search', authRequired, async (req, res) => {
   } catch (err) {
     console.error(err);
     return fail(res, 500, 'Search failed');
+  }
+});
+
+/** Partners from paired sessions. */
+router.get('/partners', authRequired, async (req, res) => {
+  try {
+    const me = req.user._id;
+    const sessions = await Session.find({
+      $or: [{ hostId: me }, { guestId: me }],
+      guestId: { $ne: null },
+    })
+      .sort({ updatedAt: -1 })
+      .limit(200);
+
+    const partnerMap = new Map();
+    for (const s of sessions) {
+      const otherId =
+        String(s.hostId) === String(me) ? s.guestId : s.hostId;
+      if (!otherId) continue;
+      const key = String(otherId);
+      const prev = partnerMap.get(key);
+      partnerMap.set(key, {
+        userId: key,
+        sessionsTogether: (prev?.sessionsTogether || 0) + 1,
+        lastSessionAt: prev?.lastSessionAt || s.updatedAt || s.createdAt,
+      });
+    }
+
+    const users = await User.find({
+      _id: { $in: [...partnerMap.keys()] },
+    });
+    const byId = new Map(users.map((u) => [u._id.toString(), u]));
+
+    const items = [...partnerMap.values()]
+      .map((p) => {
+        const u = byId.get(p.userId);
+        if (!u) return null;
+        const showOnline = u.privacy?.showOnlineStatus !== false;
+        return {
+          id: u._id.toString(),
+          fullName: u.displayName,
+          username: u.username,
+          avatarUrl: u.avatarUrl,
+          online: showOnline ? !!u.onlineStatus : false,
+          sessionsTogether: p.sessionsTogether,
+          lastSessionAt: p.lastSessionAt,
+          lastSessionLabel: createdAtLabel(p.lastSessionAt || new Date()),
+        };
+      })
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          new Date(b.lastSessionAt).getTime() -
+          new Date(a.lastSessionAt).getTime(),
+      );
+
+    return ok(res, { items, count: items.length });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 500, 'Failed to load partners');
+  }
+});
+
+/** Session history for the current user. */
+router.get('/sessions', authRequired, async (req, res) => {
+  try {
+    const me = req.user._id;
+    const sessions = await Session.find({
+      $or: [{ hostId: me }, { guestId: me }],
+    })
+      .sort({ updatedAt: -1 })
+      .limit(50);
+
+    const otherIds = sessions
+      .map((s) =>
+        String(s.hostId) === String(me) ? s.guestId : s.hostId,
+      )
+      .filter(Boolean)
+      .map(String);
+    const users = await User.find({ _id: { $in: otherIds } });
+    const byId = new Map(users.map((u) => [u._id.toString(), u]));
+
+    const items = sessions.map((s) => {
+      const otherId =
+        String(s.hostId) === String(me) ? s.guestId : s.hostId;
+      const partner = otherId ? byId.get(String(otherId)) : null;
+      return {
+        id: s._id.toString(),
+        syncCode: s.syncCode,
+        status: s.status,
+        role: String(s.hostId) === String(me) ? 'host' : 'guest',
+        partner: partner
+          ? {
+              id: partner._id.toString(),
+              fullName: partner.displayName,
+              avatarUrl: partner.avatarUrl,
+            }
+          : null,
+        capturesCount: (s.captures || []).length,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+        createdAtLabel: createdAtLabel(s.createdAt || new Date()),
+      };
+    });
+
+    return ok(res, { items, count: items.length });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 500, 'Failed to load sessions');
   }
 });
 
