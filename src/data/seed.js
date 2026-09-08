@@ -12,6 +12,11 @@ const {
   Subscription,
   Notification,
   Ticket,
+  Session,
+  StitchJob,
+  Pose,
+  PairRequest,
+  UserNotification,
 } = require('../models');
 
 function daysAgo(n) {
@@ -37,6 +42,11 @@ async function clearAll() {
     Subscription.deleteMany({}),
     Notification.deleteMany({}),
     Ticket.deleteMany({}),
+    Session.deleteMany({}),
+    StitchJob.deleteMany({}),
+    Pose.deleteMany({}),
+    PairRequest.deleteMany({}),
+    UserNotification.deleteMany({}),
   ]);
 }
 

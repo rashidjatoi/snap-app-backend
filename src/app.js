@@ -54,12 +54,31 @@ function createApp() {
     });
   });
 
-  app.use('/api/auth', authRoutes);
-  app.use('/api/users', userRoutes);
-  app.use('/api/snaps', snapRoutes);
-  app.use('/api/subscriptions', subscriptionRoutes);
-  app.use('/api/support', supportRoutes);
-  app.use('/api/uploads', uploadRoutes);
+  const sessionRoutes = require('./routes/sessions');
+  const stitchJobRoutes = require('./routes/stitchJobs');
+  const poseRoutes = require('./routes/poses');
+  const homeRoutes = require('./routes/home');
+  const userNotificationRoutes = require('./routes/userNotifications');
+  const pairRequestRoutes = require('./routes/pairRequests');
+
+  function mountApi(base) {
+    app.use(`${base}/auth`, authRoutes);
+    app.use(`${base}/users`, userRoutes);
+    app.use(`${base}/snaps`, snapRoutes);
+    app.use(`${base}/subscriptions`, subscriptionRoutes);
+    app.use(`${base}/support`, supportRoutes);
+    app.use(`${base}/uploads`, uploadRoutes);
+    app.use(`${base}/sessions`, sessionRoutes);
+    app.use(`${base}/stitch-jobs`, stitchJobRoutes);
+    app.use(`${base}/poses`, poseRoutes);
+    app.use(`${base}/home`, homeRoutes);
+    app.use(`${base}/notifications`, userNotificationRoutes);
+    app.use(`${base}/pair-requests`, pairRequestRoutes);
+  }
+
+  // Mobile contract uses /api/v1/*; existing clients use /api/*
+  mountApi('/api');
+  mountApi('/api/v1');
 
   const admin = express.Router();
   admin.use(authRequired, adminRequired);
@@ -70,6 +89,7 @@ function createApp() {
   admin.use('/notifications', adminNotifications);
   admin.use('/support', adminSupport);
   app.use('/api/admin', admin);
+  app.use('/api/v1/admin', admin);
 
   app.use((err, _req, res, _next) => {
     console.error(err);

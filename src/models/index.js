@@ -1,3 +1,8 @@
+const Session = require('./Session');
+const StitchJob = require('./StitchJob');
+const Pose = require('./Pose');
+const PairRequest = require('./PairRequest');
+const UserNotification = require('./UserNotification');
 const User = require('./User');
 const Snap = require('./Snap');
 const Comment = require('./Comment');
@@ -18,4 +23,9 @@ module.exports = {
   Subscription,
   Notification,
   Ticket,
+  Session,
+  StitchJob,
+  Pose,
+  PairRequest,
+  UserNotification,
 };

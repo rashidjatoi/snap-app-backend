@@ -15,7 +15,7 @@ router.post('/', authRequired, upload.single('file'), async (req, res) => {
     if (!req.file) return fail(res, 400, 'file is required');
 
     const folder = (req.body && req.body.folder) || 'uploads';
-    const allowed = ['avatars', 'snaps', 'poses', 'uploads'];
+    const allowed = ['avatars', 'snaps', 'poses', 'uploads', 'captures'];
     const safeFolder = allowed.includes(folder) ? folder : 'uploads';
 
     const result = await uploadBuffer(req.file.buffer, {
