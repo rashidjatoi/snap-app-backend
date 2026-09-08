@@ -41,6 +41,18 @@ function createApp() {
     });
   });
 
+  app.get('/api/v1/health', (_req, res) => {
+    res.json({
+      success: true,
+      data: {
+        service: 'snap-app-api',
+        status: 'ok',
+        db: 'mongodb',
+        time: new Date().toISOString(),
+      },
+    });
+  });
+
   // Also support health without /api prefix (Vercel root)
   app.get('/health', (_req, res) => {
     res.json({
