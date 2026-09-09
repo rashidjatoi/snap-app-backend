@@ -30,6 +30,7 @@ router.get('/', authRequired, async (req, res) => {
         const partner = await User.findById(partnerId);
         if (partner) {
           activePair = {
+            sessionId: activeSession._id.toString(),
             partnerId: partner._id.toString(),
             partnerName: partner.displayName,
             partnerAvatarUrl: partner.avatarUrl,
