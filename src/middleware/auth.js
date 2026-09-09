@@ -23,7 +23,18 @@ async function authRequired(req, res, next) {
       return res.status(401).json({ success: false, message: 'User not found' });
     }
     if (user.status === 'banned') {
-      return res.status(403).json({ success: false, message: 'Account banned' });
+      return res.status(403).json({
+        success: false,
+        message: 'Account banned',
+        error: { code: 'ACCOUNT_BANNED' },
+      });
+    }
+    if (user.status === 'suspended') {
+      return res.status(403).json({
+        success: false,
+        message: 'Account suspended',
+        error: { code: 'ACCOUNT_SUSPENDED' },
+      });
     }
     req.user = user;
     next();

@@ -47,9 +47,100 @@ router.post('/payments/:id/refund', async (req, res) => {
     payment.status = 'refunded';
     payment.refundedAt = new Date();
     await payment.save();
+
+    // Revoke premium access for the payer.
+    if (payment.userId) {
+      await User.findByIdAndUpdate(payment.userId, { premium: false });
+      await Subscription.updateMany(
+        { userId: payment.userId, status: 'active' },
+        { $set: { status: 'cancelled', cancelledAt: new Date() } },
+      );
+      try {
+        const { notifyUser } = require('../../services/pushNotify');
+        await notifyUser({
+          userId: payment.userId,
+          type: 'admin_push',
+          title: 'Subscription updated',
+          body: 'Your premium access was refunded and is no longer active.',
+          actor: { initial: 'H', name: 'HoldPose' },
+        });
+      } catch (_) {
+        /* optional */
+      }
+    }
+
     return ok(res, { payment: payment.toJSONSafe() });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 500, 'Refund failed');
+  }
+});
+
+router.post('/users/:id/premium', async (req, res) => {
+  try {
+    const premium = req.body?.premium !== false;
+    const user = await User.findById(req.params.id);
+    if (!user) return fail(res, 404, 'User not found');
+    if (user.role === 'admin') return fail(res, 400, 'Cannot change admin premium');
+    user.premium = premium;
+    await user.save();
+
+    if (premium) {
+      await Subscription.create({
+        userId: user._id,
+        plan: req.body?.plan === 'premium_yearly' ? 'premium_yearly' : 'premium_monthly',
+        price: Number(req.body?.price) || 0,
+        status: 'active',
+        startedAt: new Date(),
+      });
+    } else {
+      await Subscription.updateMany(
+        { userId: user._id, status: 'active' },
+        { $set: { status: 'cancelled', cancelledAt: new Date() } },
+      );
+    }
+
+    try {
+      const { notifyUser } = require('../../services/pushNotify');
+      await notifyUser({
+        userId: user._id,
+        type: 'admin_push',
+        title: premium ? 'Premium unlocked' : 'Premium removed',
+        body: premium
+          ? 'An admin granted you HoldPose Premium.'
+          : 'Your HoldPose Premium access was removed by an admin.',
+        actor: { initial: 'H', name: 'HoldPose' },
+      });
+    } catch (_) {
+      /* optional */
+    }
+
+    return ok(res, { user: publicUser(user) });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 500, 'Failed to update premium');
+  }
+});
+
+router.patch('/subscriptions/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body || {};
+    if (!['active', 'cancelled'].includes(status)) {
+      return fail(res, 400, 'Invalid status');
+    }
+    const sub = await Subscription.findById(req.params.id);
+    if (!sub) return fail(res, 404, 'Subscription not found');
+    sub.status = status;
+    if (status === 'cancelled') sub.cancelledAt = new Date();
+    await sub.save();
+    if (status === 'cancelled') {
+      await User.findByIdAndUpdate(sub.userId, { premium: false });
+    } else if (status === 'active') {
+      await User.findByIdAndUpdate(sub.userId, { premium: true });
+    }
+    return ok(res, { subscription: sub.toJSONSafe() });
   } catch {
-    return fail(res, 404, 'Payment not found');
+    return fail(res, 404, 'Subscription not found');
   }
 });
 

@@ -1,6 +1,7 @@
 const express = require('express');
 const { Ticket, User } = require('../../models');
 const { ok, fail } = require('../../utils/response');
+const { notifyUser } = require('../../services/pushNotify');
 
 const router = express.Router();
 
@@ -52,10 +53,27 @@ router.post('/tickets/:id/reply', async (req, res) => {
     ticket.replies.push({
       authorId: req.user._id,
       authorRole: 'admin',
-      message,
+      message: String(message).trim(),
       createdAt: new Date(),
     });
+    if (ticket.status === 'resolved' || ticket.status === 'closed') {
+      ticket.status = 'pending';
+    }
     await ticket.save();
+
+    try {
+      await notifyUser({
+        userId: ticket.userId,
+        type: 'support_reply',
+        title: 'Support replied',
+        body: `New reply on “${ticket.subject}”: ${String(message).trim().slice(0, 120)}`,
+        payload: {},
+        actor: { initial: 'S', name: 'Support' },
+      });
+    } catch (err) {
+      console.warn('support reply notify failed', err.message);
+    }
+
     return ok(res, { ticket: await withUser(ticket) });
   } catch (err) {
     console.error(err);
@@ -73,6 +91,20 @@ router.patch('/tickets/:id/status', async (req, res) => {
     if (!ticket) return fail(res, 404, 'Ticket not found');
     ticket.status = status;
     await ticket.save();
+
+    try {
+      await notifyUser({
+        userId: ticket.userId,
+        type: 'support_status',
+        title: 'Complaint updated',
+        body: `Your ticket “${ticket.subject}” is now ${status}.`,
+        payload: {},
+        actor: { initial: 'S', name: 'Support' },
+      });
+    } catch (err) {
+      console.warn('support status notify failed', err.message);
+    }
+
     return ok(res, { ticket: await withUser(ticket) });
   } catch {
     return fail(res, 404, 'Ticket not found');

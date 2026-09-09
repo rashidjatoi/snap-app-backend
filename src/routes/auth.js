@@ -70,8 +70,8 @@ router.post('/login', async (req, res) => {
 
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) return fail(res, 401, 'Invalid credentials');
-    if (user.status === 'banned') return fail(res, 403, 'Account banned');
-    if (user.status === 'suspended') return fail(res, 403, 'Account suspended');
+    if (user.status === 'banned') return fail(res, 403, 'Account banned', 'ACCOUNT_BANNED');
+    if (user.status === 'suspended') return fail(res, 403, 'Account suspended', 'ACCOUNT_SUSPENDED');
 
     user.lastActiveAt = new Date();
     await user.save();
@@ -188,6 +188,8 @@ router.post('/social', async (req, res) => {
         ],
       });
     } else {
+      if (user.status === 'banned') return fail(res, 403, 'Account banned', 'ACCOUNT_BANNED');
+      if (user.status === 'suspended') return fail(res, 403, 'Account suspended', 'ACCOUNT_SUSPENDED');
       user.firebaseUid = user.firebaseUid || firebaseUid;
       if (!user.avatarUrl && decoded.picture) {
         user.avatarUrl = decoded.picture;

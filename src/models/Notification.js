@@ -8,6 +8,8 @@ const notificationSchema = new mongoose.Schema(
     type: { type: String, enum: ['push', 'announcement', 'event'], default: 'push' },
     status: { type: String, enum: ['draft', 'sent'], default: 'sent' },
     sentAt: { type: Date, default: Date.now },
+    deliveredCount: { type: Number, default: 0 },
+    recipientCount: { type: Number, default: 0 },
   },
   { timestamps: { createdAt: true, updatedAt: true } },
 );
@@ -22,6 +24,8 @@ notificationSchema.methods.toJSONSafe = function toJSONSafe() {
     status: this.status,
     sentAt: this.sentAt,
     createdAt: this.createdAt,
+    deliveredCount: this.deliveredCount || 0,
+    recipientCount: this.recipientCount || 0,
   };
 };
 
