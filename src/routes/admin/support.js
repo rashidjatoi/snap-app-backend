@@ -23,6 +23,7 @@ router.get('/tickets', async (req, res) => {
   try {
     const filter = {};
     if (req.query.status) filter.status = req.query.status;
+    if (req.query.category) filter.category = req.query.category;
     const tickets = await Ticket.find(filter).sort({ createdAt: -1 });
     const enriched = await Promise.all(tickets.map(withUser));
     return ok(res, { tickets: enriched });
