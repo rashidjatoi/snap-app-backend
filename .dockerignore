@@ -1,0 +1,14 @@
+node_modules
+npm-debug.log
+.env
+.env.*
+!.env.example
+.git
+.gitignore
+.vercel
+vercel.json
+api
+README.md
+*.md
+src/data/db.json
+.DS_Store

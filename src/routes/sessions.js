@@ -61,7 +61,11 @@ router.post('/join', authRequired, async (req, res) => {
 
     const session = await Session.findOne({ syncCode });
     if (!session) return fail(res, 404, 'Session not found', 'SESSION_NOT_FOUND');
-    if (session.expiresAt && session.expiresAt < new Date()) {
+    const { isSessionExpired } = require('../services/sessionExpiry');
+    if (isSessionExpired(session)) {
+      session.status = 'ended';
+      session.endedAt = new Date();
+      await session.save();
       return fail(res, 410, 'Session expired', 'SESSION_EXPIRED');
     }
     if (session.guestId && String(session.guestId) !== String(req.user._id)) {
@@ -100,9 +104,18 @@ router.post('/join', authRequired, async (req, res) => {
 
 router.post('/:sessionId/join-invite', authRequired, async (req, res) => {
   try {
+    const {
+      expireStaleSessions,
+      isSessionExpired,
+    } = require('../services/sessionExpiry');
+    await expireStaleSessions({ userId: req.user._id });
+
     const session = await Session.findById(req.params.sessionId);
     if (!session) return fail(res, 404, 'Session not found', 'SESSION_NOT_FOUND');
-    if (session.expiresAt && session.expiresAt < new Date()) {
+    if (isSessionExpired(session)) {
+      session.status = 'ended';
+      session.endedAt = new Date();
+      await session.save();
       return fail(res, 410, 'Session expired', 'SESSION_EXPIRED');
     }
 
@@ -165,11 +178,65 @@ router.post('/:sessionId/retake', authRequired, async (req, res) => {
   try {
     const session = await Session.findById(req.params.sessionId);
     if (!session) return fail(res, 404, 'Session not found', 'SESSION_NOT_FOUND');
+    const uid = String(req.user._id);
+    if (
+      String(session.hostId) !== uid &&
+      (!session.guestId || String(session.guestId) !== uid)
+    ) {
+      return fail(res, 403, 'Not a session participant');
+    }
+
+    // Cancel in-flight stitch job so both peers leave the stitch UI.
+    if (session.activeStitchJobId) {
+      try {
+        const { StitchJob } = require('../models');
+        await StitchJob.updateOne(
+          { jobId: session.activeStitchJobId },
+          {
+            $set: {
+              status: 'failed',
+              message: 'Retake requested',
+              errorCode: 'RETAKE',
+            },
+          },
+        );
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
     session.captures = [];
     session.activeStitchJobId = null;
     session.status = 'live';
     await session.save();
-    return ok(res, { retake: true, status: session.status });
+
+    const { appendSignal } = require('./signaling');
+    const { session: updated, signal } = await appendSignal(session._id, {
+      type: 'capture.retake',
+      fromUserId: uid,
+      payload: {
+        requestedAt: new Date().toISOString(),
+        byUserId: uid,
+      },
+    });
+    if (typeof _broadcast === 'function') {
+      _broadcast(
+        session._id.toString(),
+        {
+          type: signal.type,
+          fromUserId: signal.fromUserId,
+          payload: signal.payload,
+          signalId: signal.signalId,
+          createdAt: signal.createdAt,
+        },
+        uid,
+      );
+    }
+
+    return ok(res, {
+      retake: true,
+      status: updated?.status || session.status,
+    });
   } catch (err) {
     return fail(res, 500, err.message || 'Retake failed');
   }
@@ -218,10 +285,27 @@ router.post(
 
       let mediaUrl = req.body?.mediaUrl;
       if (req.file) {
-        const uploaded = await uploadBuffer(req.file.buffer, {
+        let buffer = req.file.buffer;
+        let contentType = req.file.mimetype;
+        let filename = req.file.originalname || `capture_${Date.now()}`;
+        if (mediaType === 'video') {
+          try {
+            const { normalizeToMp4 } = require('../services/mediaStitch');
+            buffer = await normalizeToMp4(buffer);
+            contentType = 'video/mp4';
+            filename = `capture_${Date.now()}.mp4`;
+            console.log('Normalized capture video to H.264 mp4', {
+              bytes: buffer.length,
+              userId: String(req.user._id),
+            });
+          } catch (normErr) {
+            console.error('Video normalize failed, uploading raw:', normErr.message);
+          }
+        }
+        const uploaded = await uploadBuffer(buffer, {
           folder: 'captures',
-          filename: req.file.originalname || `capture_${Date.now()}`,
-          contentType: req.file.mimetype,
+          filename,
+          contentType,
           userId: req.user._id.toString(),
         });
         mediaUrl = uploaded.url;

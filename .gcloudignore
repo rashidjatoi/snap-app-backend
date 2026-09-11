@@ -1,0 +1,14 @@
+# Upload rules for Cloud Build (do not include secrets)
+.git
+.gitignore
+.gcloudignore
+.env
+.env.*
+!.env.example
+.vercel
+node_modules
+npm-debug.log
+src/data/db.json
+*.md
+# Firebase SA is injected via Secret Manager, not the image
+*firebase-adminsdk*.json

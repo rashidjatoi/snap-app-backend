@@ -47,6 +47,19 @@ router.patch('/:id/status', async (req, res) => {
     if (!user) return fail(res, 404, 'User not found');
     user.status = status;
     await user.save();
+    const { notifyUser } = require('../../services/pushNotify');
+    await notifyUser({
+      userId: user._id,
+      type: 'account_status',
+      title: status === 'active' ? 'Account restored' : `Account ${status}`,
+      body:
+        status === 'banned'
+          ? 'Your account has been banned by an admin.'
+          : status === 'suspended'
+            ? 'Your account has been suspended by an admin.'
+            : 'Your account is active again.',
+      payload: { status },
+    });
     return ok(res, { user: publicUser(user) });
   } catch {
     return fail(res, 404, 'User not found');
@@ -60,6 +73,42 @@ router.patch('/:id/verify', async (req, res) => {
     if (!user) return fail(res, 404, 'User not found');
     user.verified = !!verified;
     await user.save();
+    const { notifyUser } = require('../../services/pushNotify');
+    await notifyUser({
+      userId: user._id,
+      type: 'account_verified',
+      title: verified ? 'Verified' : 'Verification removed',
+      body: verified
+        ? 'Your HoldPose profile is now verified.'
+        : 'Your verified badge was removed.',
+      payload: { verified },
+    });
+    return ok(res, { user: publicUser(user) });
+  } catch {
+    return fail(res, 404, 'User not found');
+  }
+});
+
+router.patch('/:id/capture', async (req, res) => {
+  try {
+    const enabled = req.body?.enabled !== false;
+    const user = await User.findOne({ _id: req.params.id, role: 'user' });
+    if (!user) return fail(res, 404, 'User not found');
+    if (!user.privacy) user.privacy = {};
+    user.privacy.adminMediaLock = !enabled;
+    user.privacy.cameraAccess = enabled;
+    user.privacy.microphoneAccess = enabled;
+    await user.save();
+    const { notifyUser } = require('../../services/pushNotify');
+    await notifyUser({
+      userId: user._id,
+      type: 'capture_access',
+      title: enabled ? 'Camera unlocked' : 'Camera disabled',
+      body: enabled
+        ? 'An admin restored your camera and microphone access.'
+        : 'An admin disabled camera capture on your account.',
+      payload: { enabled },
+    });
     return ok(res, { user: publicUser(user) });
   } catch {
     return fail(res, 404, 'User not found');

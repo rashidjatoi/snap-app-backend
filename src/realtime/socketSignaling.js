@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 const config = require('../config');
 const { User, Session } = require('../models');
+const { appendSignal } = require('../routes/signaling');
 
 /**
  * Optional Socket.IO signaling for long-running Node hosts.
@@ -81,33 +82,24 @@ function attachSocketSignaling(httpServer) {
       try {
         const sessionId = msg.sessionId || socket.sessionId;
         if (!sessionId) return;
-        const session = await Session.findById(sessionId);
-        if (!session) return;
 
         const type = String(msg.type || '');
         const fromUserId = socket.userId;
-        const signal = {
-          signalId: `sig_${Date.now().toString(36)}`,
+        const payload = msg.payload || {};
+        const createdAt = new Date();
+        // Broadcast first so ICE/offer isn't blocked on Mongo latency.
+        const live = {
+          signalId: `sig_live_${Date.now().toString(36)}`,
           type,
           fromUserId,
-          payload: msg.payload || {},
-          createdAt: new Date(),
-        };
-        session.signals = [...(session.signals || []), signal].slice(-200);
-        if (type === 'peer.ready') {
-          const ready = new Set(session.readyUserIds || []);
-          ready.add(fromUserId);
-          session.readyUserIds = [...ready];
-          if (['paired', 'ready_to_pair'].includes(session.status)) {
-            session.status = 'live';
-          }
-        }
-        await session.save();
-
-        socket.to(`session:${sessionId}`).emit('signal', {
-          ...signal,
+          payload,
           sessionId,
-          createdAt: signal.createdAt.toISOString(),
+          createdAt: createdAt.toISOString(),
+        };
+        socket.to(`session:${sessionId}`).emit('signal', live);
+
+        appendSignal(sessionId, { type, fromUserId, payload }).catch((err) => {
+          console.error('socket signal persist error', err);
         });
       } catch (err) {
         console.error('socket signal error', err);

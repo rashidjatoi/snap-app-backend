@@ -18,8 +18,8 @@ async function bootstrap() {
     console.warn('Could not wire signal broadcast:', err.message);
   }
 
-  server.listen(config.port, () => {
-    console.log(`Snap API running on http://localhost:${config.port}`);
+  server.listen(config.port, '0.0.0.0', () => {
+    console.log(`Snap API running on http://0.0.0.0:${config.port}`);
     console.log(`WebRTC signaling: Socket.IO + REST /sessions/:id/signal`);
     console.log(`MongoDB: ${config.mongoUri}`);
     console.log(`Admin: ${config.adminEmail} / ${config.adminPassword}`);

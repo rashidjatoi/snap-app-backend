@@ -47,6 +47,7 @@ router.get('/:poseId', authRequired, async (req, res) => {
       id: pose.poseId,
       mediaType: pose.mediaType,
       mediaUrl: pose.mediaUrl,
+      peerMediaUrl: pose.peerMediaUrl || null,
       thumbnailUrl: pose.thumbnailUrl || pose.mediaUrl,
       partners: pose.partners,
       createdAt: pose.createdAt?.toISOString?.(),
@@ -58,6 +59,7 @@ router.get('/:poseId', authRequired, async (req, res) => {
       isFavorite: (pose.favoritedBy || []).some((id) => String(id) === String(req.user._id)),
       durationSec: pose.durationSec,
       sessionId: pose.sessionId?.toString?.(),
+      localMediaPath: pose.mediaUrl,
     });
   } catch (err) {
     return fail(res, 500, err.message || 'Failed to load pose');
@@ -125,8 +127,12 @@ router.post('/:poseId/share-link', authRequired, async (req, res) => {
   try {
     const pose = await Pose.findOne({ poseId: req.params.poseId });
     if (!pose) return fail(res, 404, 'Pose not found');
-    if (!pose.shareUrl) {
-      pose.shareUrl = `https://holdpose.app/p/${pose.poseId}`;
+    const {
+      poseShareUrl,
+      isDeadPlaceholderShareUrl,
+    } = require('../utils/publicUrl');
+    if (!pose.shareUrl || isDeadPlaceholderShareUrl(pose.shareUrl)) {
+      pose.shareUrl = poseShareUrl(pose.poseId, req);
       await pose.save();
     }
     return ok(res, { shareUrl: pose.shareUrl });

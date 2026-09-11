@@ -1,0 +1,43 @@
+# HoldPose WebRTC TURN (coturn) — run on a public VM (GCP), not Cloud Run.
+# Cloud Run stays the live API; this container relays media between peers.
+#
+# Deploy to the existing GCP VM:
+#   ./scripts/deploy-turn-docker.sh
+#
+# Or manually on a host with a public IP:
+#   EXTERNAL_IP=x.x.x.x docker compose -f docker-compose.turn.yml up -d
+
+services:
+  coturn:
+    image: instrumentisto/coturn:latest
+    container_name: holdpose-coturn
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      EXTERNAL_IP: ${EXTERNAL_IP:?Set EXTERNAL_IP to the VM public IP}
+      TURN_USER: ${TURN_USER:-snap}
+      TURN_PASS: ${TURN_PASS:-snapturn}
+      TURN_REALM: ${TURN_REALM:-holdpose.souqgate}
+    command:
+      - -n
+      - --log-file=stdout
+      - --external-ip=${EXTERNAL_IP}
+      - --listening-ip=0.0.0.0
+      - --listening-port=3478
+      - --min-port=49160
+      - --max-port=49300
+      - --fingerprint
+      - --lt-cred-mech
+      - --user=${TURN_USER:-snap}:${TURN_PASS:-snapturn}
+      - --realm=${TURN_REALM:-holdpose.souqgate}
+      - --no-cli
+      - --no-tls
+      - --no-dtls
+      - --verbose
+      # Default coturn denies private peers → CreatePermission 403 → peer usage 0.
+      - --allowed-peer-ip=0.0.0.0-255.255.255.255
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

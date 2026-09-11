@@ -233,6 +233,15 @@ router.get('/privacy', authRequired, (req, res) => {
 router.patch('/privacy', authRequired, async (req, res) => {
   try {
     const body = req.body || {};
+    const locked = !!(req.user.privacy && req.user.privacy.adminMediaLock);
+    if (locked && (body.cameraAccess === true || body.microphoneAccess === true)) {
+      return fail(
+        res,
+        403,
+        'Camera access is locked by an admin',
+        'CAPTURE_LOCKED',
+      );
+    }
     const keys = [
       'cameraAccess',
       'microphoneAccess',
@@ -244,7 +253,12 @@ router.patch('/privacy', authRequired, async (req, res) => {
       'analyticsAndCrashReports',
     ];
     keys.forEach((k) => {
-      if (body[k] !== undefined) req.user.privacy[k] = body[k];
+      if (body[k] !== undefined) {
+        if (locked && (k === 'cameraAccess' || k === 'microphoneAccess')) {
+          return;
+        }
+        req.user.privacy[k] = body[k];
+      }
     });
     if (body.showOnlineStatus !== undefined) {
       req.user.onlineStatus = !!body.showOnlineStatus;

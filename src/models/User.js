@@ -36,6 +36,8 @@ const userSchema = new mongoose.Schema(
       locationAccess: { type: Boolean, default: false },
       showOnlineStatus: { type: Boolean, default: true },
       readReceipts: { type: Boolean, default: true },
+      /** When true, admin disabled capture — app must not auto-enable camera/mic. */
+      adminMediaLock: { type: Boolean, default: false },
       whoCanPair: {
         type: String,
         enum: ['everyone', 'friends_only', 'nobody'],
@@ -89,6 +91,7 @@ userSchema.methods.toPublic = function toPublic() {
       locationAccess: this.privacy?.locationAccess ?? false,
       showOnlineStatus: this.privacy?.showOnlineStatus ?? true,
       readReceipts: this.privacy?.readReceipts ?? true,
+      adminMediaLock: this.privacy?.adminMediaLock ?? false,
       whoCanPair: this.privacy?.whoCanPair ?? 'friends_only',
       whoCanSeePoses: this.privacy?.whoCanSeePoses ?? 'only_me',
       analyticsAndCrashReports: this.privacy?.analyticsAndCrashReports ?? false,

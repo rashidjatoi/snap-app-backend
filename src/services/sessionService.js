@@ -125,7 +125,19 @@ async function advanceStitchJob(job) {
 
   const captures = session.captures || [];
   const needsBoth = !!session.guestId;
+  const waitElapsed =
+    Date.now() - new Date(job.startedAt || job.createdAt).getTime();
   if (needsBoth && captures.length < 2) {
+    // Don't leave clients spinning forever when one peer's upload fails.
+    if (waitElapsed > 45000) {
+      job.status = 'failed';
+      job.errorCode = 'PEER_MEDIA_MISSING';
+      job.progress = 25;
+      job.message =
+        'Partner video did not upload. Retake on both devices.';
+      await job.save();
+      return job;
+    }
     job.status = 'pending';
     job.progress = Math.min(40, 10 + captures.length * 15);
     job.message = 'Waiting for both cameras…';
@@ -175,8 +187,8 @@ async function advanceStitchJob(job) {
 
   if (mediaType === 'photo' && guestCap && guestCap.mediaUrl !== hostCap.mediaUrl) {
     try {
-      const { stitchPhotosSideBySide } = require('./mediaStitch');
-      mediaUrl = await stitchPhotosSideBySide({
+      const { stitchPhotosTopBottom } = require('./mediaStitch');
+      mediaUrl = await stitchPhotosTopBottom({
         hostUrl: hostCap.mediaUrl,
         guestUrl: guestCap.mediaUrl,
         userId: session.hostId.toString(),
@@ -190,13 +202,15 @@ async function advanceStitchJob(job) {
     }
   }
 
-  // Dual video: both peer recordings kept; client can play split / host primary.
+  // Dual video: Flutter plays top/bottom synced — server does NOT ffmpeg-merge
+  // (Genymotion/WebRTC recordings are unreliable to stitch server-side).
   if (mediaType === 'video') {
-    mediaUrl = hostCap.mediaUrl;
     if (guestCap && guestCap.mediaUrl && guestCap.mediaUrl !== hostCap.mediaUrl) {
+      mediaUrl = hostCap.mediaUrl;
       peerMediaUrl = guestCap.mediaUrl;
       videoStrategy = 'dual_peer';
     } else {
+      mediaUrl = hostCap.mediaUrl;
       videoStrategy = 'host_primary';
     }
   }
@@ -209,7 +223,8 @@ async function advanceStitchJob(job) {
   const guestName = guest?.displayName || 'Partner';
   const partnersLabel = `You & ${guestName}`;
   const poseId = `pose_${uuid().replace(/-/g, '').slice(0, 12)}`;
-  const shareUrl = `https://holdpose.app/p/${poseId}`;
+  const { poseShareUrl } = require('../utils/publicUrl');
+  const shareUrl = poseShareUrl(poseId);
   const durationSec =
     mediaType === 'video' && hostCap.durationMs
       ? Math.min(30, Math.round(hostCap.durationMs / 1000))

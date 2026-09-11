@@ -72,6 +72,10 @@ function createApp() {
   const homeRoutes = require('./routes/home');
   const userNotificationRoutes = require('./routes/userNotifications');
   const pairRequestRoutes = require('./routes/pairRequests');
+  const publicShareRoutes = require('./routes/publicShare');
+
+  // Public share pages (no auth) — WhatsApp / Copy Link open these.
+  app.use('/p', publicShareRoutes);
 
   function mountApi(base) {
     app.use(`${base}/auth`, authRoutes);
