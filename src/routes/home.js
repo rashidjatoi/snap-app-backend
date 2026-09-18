@@ -70,16 +70,8 @@ router.get('/', authRequired, async (req, res) => {
     const sessionsCount = await Session.countDocuments({
       $or: [{ hostId: user._id }, { guestId: user._id }],
     });
-    const partnerIds = new Set();
-    const allSessions = await Session.find({
-      $or: [{ hostId: user._id }, { guestId: user._id }],
-      guestId: { $ne: null },
-    }).select('hostId guestId');
-    for (const s of allSessions) {
-      const other =
-        String(s.hostId) === String(user._id) ? s.guestId : s.hostId;
-      if (other) partnerIds.add(String(other));
-    }
+    const { countAcceptedFriends } = require('../services/friendsService');
+    const partnersCount = await countAcceptedFriends(user._id);
 
     const unreadNotifications = await UserNotification.countDocuments({
       userId: user._id,
@@ -97,7 +89,7 @@ router.get('/', authRequired, async (req, res) => {
       activePair,
       stats: {
         poses: posesCount,
-        partners: partnerIds.size,
+        partners: partnersCount,
         sessions: sessionsCount,
       },
       unreadNotifications,

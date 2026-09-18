@@ -21,15 +21,8 @@ async function buildProfile(user) {
   const sessionsCount = await Session.countDocuments({
     $or: [{ hostId: me }, { guestId: me }],
   });
-  const pairedSessions = await Session.find({
-    $or: [{ hostId: me }, { guestId: me }],
-    guestId: { $ne: null },
-  }).select('hostId guestId');
-  const partnerIds = new Set();
-  for (const s of pairedSessions) {
-    const other = String(s.hostId) === String(me) ? s.guestId : s.hostId;
-    if (other) partnerIds.add(String(other));
-  }
+  const { countAcceptedFriends } = require('../services/friendsService');
+  const partnersCount = await countAcceptedFriends(me);
 
   const base = publicUser(user);
   return {
@@ -37,7 +30,7 @@ async function buildProfile(user) {
     fullName: user.displayName,
     stats: {
       poses: posesCount,
-      partners: partnerIds.size,
+      partners: partnersCount,
       sessions: sessionsCount,
     },
   };

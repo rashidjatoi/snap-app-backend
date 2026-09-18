@@ -107,6 +107,9 @@ async function notifyBecameFriends(userIdA, userIdB) {
 }
 
 async function listFriends(userId) {
+  // Past HoldPose session partners should appear as friends (backfill).
+  await syncFriendsFromSessionPartners(userId);
+
   const rows = await Friendship.find({
     status: 'accepted',
     $or: [{ userA: userId }, { userB: userId }],
@@ -130,6 +133,54 @@ async function listFriends(userId) {
       });
     })
     .filter(Boolean);
+}
+
+/**
+ * Create accepted friendships for anyone this user has already paired with
+ * in a live session. Fixes dashboard “1 partners” vs empty friends list.
+ */
+async function syncFriendsFromSessionPartners(userId) {
+  const { Session } = require('../models');
+  const sessions = await Session.find({
+    $or: [{ hostId: userId }, { guestId: userId }],
+    guestId: { $ne: null },
+  })
+    .select('hostId guestId')
+    .limit(500)
+    .lean();
+
+  const otherIds = new Set();
+  for (const s of sessions) {
+    const other =
+      String(s.hostId) === String(userId) ? s.guestId : s.hostId;
+    if (other) otherIds.add(String(other));
+  }
+  if (otherIds.size === 0) return 0;
+
+  let created = 0;
+  for (const otherId of otherIds) {
+    try {
+      const result = await ensureAcceptedFriends(userId, otherId, {
+        requestedBy: userId,
+      });
+      if (result?.created) created += 1;
+    } catch (err) {
+      console.warn(
+        'syncFriendsFromSessionPartners failed for',
+        otherId,
+        err.message,
+      );
+    }
+  }
+  return created;
+}
+
+async function countAcceptedFriends(userId) {
+  await syncFriendsFromSessionPartners(userId);
+  return Friendship.countDocuments({
+    status: 'accepted',
+    $or: [{ userA: userId }, { userB: userId }],
+  });
 }
 
 async function listPendingFor(userId) {
@@ -180,4 +231,6 @@ module.exports = {
   notifyBecameFriends,
   listFriends,
   listPendingFor,
+  syncFriendsFromSessionPartners,
+  countAcceptedFriends,
 };
