@@ -69,27 +69,38 @@ async function stitchPhotosTopBottom({ hostUrl, guestUrl, userId }) {
   return uploaded.url;
 }
 
-function runFfmpeg(args) {
+function runProcess(bin, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
     let stderr = '';
+    child.stdout.on('data', (d) => {
+      stdout += d.toString();
+    });
     child.stderr.on('data', (d) => {
       stderr += d.toString();
     });
     child.on('error', reject);
     child.on('close', (code) => {
-      if (code === 0) resolve();
+      if (code === 0) resolve({ stdout, stderr });
       else {
-        // Drop the huge build banner so the real error is visible.
         const useful = stderr
           .split('\n')
           .filter((line) => !/configuration:|--enable-/.test(line))
           .join('\n')
           .trim();
-        reject(new Error(`ffmpeg exited ${code}: ${(useful || stderr).slice(-1200)}`));
+        reject(
+          new Error(
+            `${bin} exited ${code}: ${(useful || stderr || stdout).slice(-1200)}`,
+          ),
+        );
       }
     });
   });
+}
+
+function runFfmpeg(args) {
+  return runProcess('ffmpeg', args).then(() => undefined);
 }
 
 async function writeTemp(buffer, ext) {
@@ -101,15 +112,51 @@ async function writeTemp(buffer, ext) {
   return file;
 }
 
+async function streamHasAudio(filePath) {
+  try {
+    const { stdout } = await runProcess('ffprobe', [
+      '-v',
+      'error',
+      '-select_streams',
+      'a:0',
+      '-show_entries',
+      'stream=codec_type',
+      '-of',
+      'csv=p=0',
+      filePath,
+    ]);
+    return /audio/i.test(String(stdout || '').trim());
+  } catch {
+    return false;
+  }
+}
+
+async function probeDurationSec(filePath) {
+  try {
+    const { stdout } = await runProcess('ffprobe', [
+      '-v',
+      'error',
+      '-show_entries',
+      'format=duration',
+      '-of',
+      'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ]);
+    const n = Number.parseFloat(String(stdout || '').trim());
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * WebRTC MediaRecorder often writes incomplete / nonstandard containers that
- * ExoPlayer rejects (NoDeclaredBrand). Re-encode to a plain H.264 MP4.
+ * ExoPlayer rejects (NoDeclaredBrand). Re-encode to a plain H.264(+AAC) MP4.
  */
 async function normalizeToMp4(inputBuf) {
   if (!inputBuf || !inputBuf.length) {
     throw new Error('Empty video buffer');
   }
-  // Probe by trying common extensions — recorder may be webm labeled as mp4.
   const attempts = ['mp4', 'webm', 'mkv', '3gp'];
   let lastErr;
   for (const ext of attempts) {
@@ -119,7 +166,8 @@ async function normalizeToMp4(inputBuf) {
       `holdpose_norm_${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`,
     );
     try {
-      await runFfmpeg([
+      const hasAudio = await streamHasAudio(inPath);
+      const args = [
         '-y',
         '-i',
         inPath,
@@ -133,16 +181,32 @@ async function normalizeToMp4(inputBuf) {
         '28',
         '-pix_fmt',
         'yuv420p',
-        '-map',
-        '0:a?',
-        '-c:a',
-        'aac',
-        '-ac',
-        '2',
-        '-movflags',
-        '+faststart',
-        outPath,
-      ]);
+        '-vsync',
+        'cfr',
+        '-r',
+        '24',
+      ];
+      if (hasAudio) {
+        args.push(
+          '-map',
+          '0:a:0',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-ac',
+          '2',
+          '-ar',
+          '48000',
+          '-af',
+          'aresample=async=1:first_pts=0',
+        );
+      } else {
+        args.push('-an');
+      }
+      args.push('-movflags', '+faststart', outPath);
+
+      await runFfmpeg(args);
       const outBuf = await fs.promises.readFile(outPath);
       if (!outBuf.length) throw new Error('normalize produced empty mp4');
       return outBuf;
@@ -159,8 +223,8 @@ async function normalizeToMp4(inputBuf) {
 }
 
 /**
- * Top/bottom stacked dual video (host top, guest bottom), synced to shortest.
- * Produces one playable/shareable mp4 — same layout as photo stitch / live feed.
+ * Top/bottom stacked dual video (host top, guest bottom).
+ * Mixes both audio tracks when present and aligns A/V timelines.
  */
 async function stitchVideosTopBottom({ hostUrl, guestUrl, userId }) {
   const [hostRaw, guestRaw] = await Promise.all([
@@ -168,7 +232,6 @@ async function stitchVideosTopBottom({ hostUrl, guestUrl, userId }) {
     fetchBuffer(guestUrl),
   ]);
 
-  // Always normalize — peer recorders rarely produce ExoPlayer-safe mp4s.
   const [hostBuf, guestBuf] = await Promise.all([
     normalizeToMp4(hostRaw),
     normalizeToMp4(guestRaw),
@@ -182,23 +245,46 @@ async function stitchVideosTopBottom({ hostUrl, guestUrl, userId }) {
   );
 
   try {
-    const filter =
-      '[0:v]scale=720:-2:force_original_aspect_ratio=decrease,setsar=1,fps=24[top];' +
-      '[1:v]scale=720:-2:force_original_aspect_ratio=decrease,setsar=1,fps=24[bot];' +
+    const [hostHasA, guestHasA, hostDur, guestDur] = await Promise.all([
+      streamHasAudio(hostPath),
+      streamHasAudio(guestPath),
+      probeDurationSec(hostPath),
+      probeDurationSec(guestPath),
+    ]);
+
+    // Same canvas width so vstack never fails on mismatched scaled widths.
+    let filter =
+      '[0:v]scale=720:-2:force_original_aspect_ratio=decrease,' +
+      'pad=720:ih:(ow-iw)/2:0,setsar=1,fps=24,setpts=PTS-STARTPTS[top];' +
+      '[1:v]scale=720:-2:force_original_aspect_ratio=decrease,' +
+      'pad=720:ih:(ow-iw)/2:0,setsar=1,fps=24,setpts=PTS-STARTPTS[bot];' +
       '[top][bot]vstack=inputs=2[v]';
 
-    await runFfmpeg([
-      '-y',
-      '-i',
-      hostPath,
-      '-i',
-      guestPath,
-      '-filter_complex',
-      filter,
-      '-map',
-      '[v]',
-      '-map',
-      '0:a?',
+    const args = ['-y', '-i', hostPath, '-i', guestPath];
+
+    if (hostHasA && guestHasA) {
+      filter +=
+        ';[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,' +
+        'aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,volume=1.0[a0]' +
+        ';[1:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,' +
+        'aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,volume=0.9[a1]' +
+        ';[a0][a1]amix=inputs=2:duration=shortest:dropout_transition=0:normalize=0[a]';
+      args.push('-filter_complex', filter, '-map', '[v]', '-map', '[a]');
+    } else if (hostHasA) {
+      filter +=
+        ';[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,' +
+        'aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS[a]';
+      args.push('-filter_complex', filter, '-map', '[v]', '-map', '[a]');
+    } else if (guestHasA) {
+      filter +=
+        ';[1:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,' +
+        'aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS[a]';
+      args.push('-filter_complex', filter, '-map', '[v]', '-map', '[a]');
+    } else {
+      args.push('-filter_complex', filter, '-map', '[v]', '-an');
+    }
+
+    args.push(
       '-c:v',
       'libx264',
       '-preset',
@@ -207,15 +293,23 @@ async function stitchVideosTopBottom({ hostUrl, guestUrl, userId }) {
       '28',
       '-pix_fmt',
       'yuv420p',
-      '-c:a',
-      'aac',
-      '-ac',
-      '2',
-      '-shortest',
-      '-movflags',
-      '+faststart',
-      outPath,
-    ]);
+    );
+
+    if (hostHasA || guestHasA) {
+      args.push('-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000');
+    }
+
+    // Prefer explicit duration (shorter clip) over bare -shortest for A/V lock.
+    const durations = [hostDur, guestDur].filter((d) => d != null);
+    if (durations.length) {
+      const t = Math.min(...durations);
+      if (t > 0.2) args.push('-t', t.toFixed(3));
+    } else {
+      args.push('-shortest');
+    }
+
+    args.push('-movflags', '+faststart', outPath);
+    await runFfmpeg(args);
 
     const outBuf = await fs.promises.readFile(outPath);
     if (!outBuf.length) {
@@ -242,7 +336,6 @@ async function framesToMp4(frameBuffers, { fps = 4 } = {}) {
   if (!frameBuffers?.length) {
     throw new Error('No frames to encode');
   }
-  // Keep only real PNG frames (reject empty/corrupt grabs).
   const valid = frameBuffers.filter(
     (b) => Buffer.isBuffer(b) && b.length > 64 && b[0] === 0x89 && b[1] === 0x50,
   );
@@ -274,6 +367,7 @@ async function framesToMp4(frameBuffers, { fps = 4 } = {}) {
       '28',
       '-pix_fmt',
       'yuv420p',
+      '-an',
       '-movflags',
       '+faststart',
       outPath,

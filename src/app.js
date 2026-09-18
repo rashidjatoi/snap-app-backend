@@ -72,10 +72,15 @@ function createApp() {
   const homeRoutes = require('./routes/home');
   const userNotificationRoutes = require('./routes/userNotifications');
   const pairRequestRoutes = require('./routes/pairRequests');
+  const friendsRoutes = require('./routes/friends');
+  const posePingRoutes = require('./routes/posePings');
   const publicShareRoutes = require('./routes/publicShare');
+  const publicInviteRoutes = require('./routes/publicInvite');
 
   // Public share pages (no auth) — WhatsApp / Copy Link open these.
   app.use('/p', publicShareRoutes);
+  // Public PosePing invite landing — WhatsApp / SMS one-tap links.
+  app.use('/invite', publicInviteRoutes);
 
   function mountApi(base) {
     app.use(`${base}/auth`, authRoutes);
@@ -90,6 +95,8 @@ function createApp() {
     app.use(`${base}/home`, homeRoutes);
     app.use(`${base}/notifications`, userNotificationRoutes);
     app.use(`${base}/pair-requests`, pairRequestRoutes);
+    app.use(`${base}/friends`, friendsRoutes);
+    app.use(`${base}/pose-pings`, posePingRoutes);
     app.use(`${base}/devices`, require('./routes/devices'));
   }
 

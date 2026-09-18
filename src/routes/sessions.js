@@ -77,11 +77,28 @@ router.post('/join', authRequired, async (req, res) => {
 
     const host = await User.findById(session.hostId);
     if (!host) return fail(res, 404, 'Host not found', 'SESSION_NOT_FOUND');
-    await assertHostAllowsJoin(host);
+    await assertHostAllowsJoin(host, req.user);
 
     session.guestId = req.user._id;
     session.status = 'paired';
     await session.save();
+
+    try {
+      const {
+        ensureAcceptedFriends,
+        notifyBecameFriends,
+      } = require('../services/friendsService');
+      const result = await ensureAcceptedFriends(
+        session.hostId,
+        req.user._id,
+        { requestedBy: req.user._id },
+      );
+      if (result?.created) {
+        await notifyBecameFriends(session.hostId, req.user._id);
+      }
+    } catch (friendErr) {
+      console.warn('Auto-friend on join failed:', friendErr.message);
+    }
 
     await notifyUser({
       userId: session.hostId,
@@ -120,11 +137,13 @@ router.post('/:sessionId/join-invite', authRequired, async (req, res) => {
     }
 
     const host = await User.findById(session.hostId);
-    await assertHostAllowsJoin(host);
+    if (!host) return fail(res, 404, 'Host not found', 'SESSION_NOT_FOUND');
 
     if (String(session.hostId) === String(req.user._id)) {
       return ok(res, await joinedPayload(session));
     }
+
+    await assertHostAllowsJoin(host, req.user);
 
     if (session.guestId && String(session.guestId) !== String(req.user._id)) {
       return fail(res, 409, 'Session already has two peers', 'SESSION_FULL');
@@ -133,6 +152,24 @@ router.post('/:sessionId/join-invite', authRequired, async (req, res) => {
     session.guestId = req.user._id;
     session.status = session.status === 'ready_to_pair' ? 'paired' : session.status;
     await session.save();
+
+    try {
+      const {
+        ensureAcceptedFriends,
+        notifyBecameFriends,
+      } = require('../services/friendsService');
+      const result = await ensureAcceptedFriends(
+        session.hostId,
+        req.user._id,
+        { requestedBy: req.user._id },
+      );
+      if (result?.created) {
+        await notifyBecameFriends(session.hostId, req.user._id);
+      }
+    } catch (friendErr) {
+      console.warn('Auto-friend on join-invite failed:', friendErr.message);
+    }
+
     return ok(res, await joinedPayload(session));
   } catch (err) {
     return fail(res, err.status || 500, err.message || 'Join invite failed', err.code);

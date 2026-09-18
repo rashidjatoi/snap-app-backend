@@ -27,10 +27,10 @@ router.post('/:id/accept', authRequired, async (req, res) => {
       return fail(res, 403, 'Not your pair request', 'PAIRING_DENIED');
     }
 
-    await assertHostAllowsJoin(req.user);
-
     const fromUser = await User.findById(pr.fromUserId);
     if (!fromUser) return fail(res, 404, 'Requester not found', 'PAIR_REQUEST_NOT_FOUND');
+
+    await assertHostAllowsJoin(req.user, fromUser);
 
     // Create a fresh paired session with acceptor as host for clarity
     const session = await createSessionForHost(req.user);
@@ -41,6 +41,21 @@ router.post('/:id/accept', authRequired, async (req, res) => {
     pr.status = 'accepted';
     pr.sessionId = session._id;
     await pr.save();
+
+    try {
+      const {
+        ensureAcceptedFriends,
+        notifyBecameFriends,
+      } = require('../services/friendsService');
+      const result = await ensureAcceptedFriends(req.user._id, fromUser._id, {
+        requestedBy: req.user._id,
+      });
+      if (result?.created) {
+        await notifyBecameFriends(req.user._id, fromUser._id);
+      }
+    } catch (friendErr) {
+      console.warn('Auto-friend on pair accept failed:', friendErr.message);
+    }
 
     await notifyUser({
       userId: fromUser._id,
@@ -97,8 +112,8 @@ router.post('/', authRequired, async (req, res) => {
     await notifyUser({
       userId: target._id,
       type: 'pair_request',
-      title: `${req.user.displayName} sent a pair request`,
-      body: `${req.user.displayName} wants to pair cameras with you for a live session.`,
+      title: `${req.user.displayName} sent a pose request`,
+      body: `${req.user.displayName} wants to HoldPose with you.`,
       actions: ['accept_pair', 'decline_pair'],
       payload: { pairRequestId: pr._id.toString() },
       actor: {

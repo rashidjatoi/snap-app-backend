@@ -19,6 +19,9 @@ function toDto(n) {
       pairRequestId: n.payload?.pairRequestId || null,
       poseId: n.payload?.poseId || null,
       reaction: n.payload?.reaction || null,
+      posePingId: n.payload?.posePingId || null,
+      friendshipId: n.payload?.friendshipId || null,
+      readyAt: n.payload?.readyAt || null,
     },
     actor: n.actor || null,
   };

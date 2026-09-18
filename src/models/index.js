@@ -12,6 +12,8 @@ const Coupon = require('./Coupon');
 const Subscription = require('./Subscription');
 const Notification = require('./Notification');
 const Ticket = require('./Ticket');
+const Friendship = require('./Friendship');
+const PosePing = require('./PosePing');
 
 module.exports = {
   User,
@@ -28,4 +30,6 @@ module.exports = {
   Pose,
   PairRequest,
   UserNotification,
+  Friendship,
+  PosePing,
 };

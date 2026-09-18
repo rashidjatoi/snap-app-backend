@@ -39,7 +39,7 @@ async function assertCanCreateSession(user) {
   }
 }
 
-async function assertHostAllowsJoin(host) {
+async function assertHostAllowsJoin(host, joiner) {
   const who = host.privacy?.whoCanPair || 'friends_only';
   if (who === 'nobody') {
     const err = new Error('This user is not accepting pair requests');
@@ -47,7 +47,16 @@ async function assertHostAllowsJoin(host) {
     err.code = 'PAIRING_DENIED';
     throw err;
   }
-  // friends_only: allow until friends graph exists (documented temporary exception)
+  if (who === 'friends_only' && joiner) {
+    const { areFriends } = require('./friendsService');
+    const friends = await areFriends(host._id, joiner._id || joiner);
+    if (!friends) {
+      const err = new Error('Only friends can join this user’s sessions');
+      err.status = 403;
+      err.code = 'PAIRING_DENIED';
+      throw err;
+    }
+  }
 }
 
 async function createSessionForHost(host, { privacy = 'private' } = {}) {
@@ -202,13 +211,25 @@ async function advanceStitchJob(job) {
     }
   }
 
-  // Dual video: Flutter plays top/bottom synced — server does NOT ffmpeg-merge
-  // (Genymotion/WebRTC recordings are unreliable to stitch server-side).
+  // Dual video: try real ffmpeg top/bottom stitch (with audio mix). Fall back to
+  // dual_peer URLs if stitch fails so the app can still preview.
   if (mediaType === 'video') {
     if (guestCap && guestCap.mediaUrl && guestCap.mediaUrl !== hostCap.mediaUrl) {
-      mediaUrl = hostCap.mediaUrl;
-      peerMediaUrl = guestCap.mediaUrl;
-      videoStrategy = 'dual_peer';
+      try {
+        const { stitchVideosTopBottom } = require('./mediaStitch');
+        mediaUrl = await stitchVideosTopBottom({
+          hostUrl: hostCap.mediaUrl,
+          guestUrl: guestCap.mediaUrl,
+          userId: session.hostId.toString(),
+        });
+        peerMediaUrl = null;
+        videoStrategy = 'split_screen';
+      } catch (err) {
+        console.error('Video stitch failed, using dual_peer preview:', err.message);
+        mediaUrl = hostCap.mediaUrl;
+        peerMediaUrl = guestCap.mediaUrl;
+        videoStrategy = 'dual_peer';
+      }
     } else {
       mediaUrl = hostCap.mediaUrl;
       videoStrategy = 'host_primary';
@@ -253,6 +274,7 @@ async function advanceStitchJob(job) {
   job.poseId = pose.poseId;
   job.previewUrl = mediaUrl;
   job.peerMediaUrl = peerMediaUrl;
+  job.videoStrategy = videoStrategy;
   job.shareUrl = shareUrl;
   job.partnersLabel = partnersLabel;
   job.completedAt = new Date();
