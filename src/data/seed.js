@@ -17,6 +17,8 @@ const {
   Pose,
   PairRequest,
   UserNotification,
+  Friendship,
+  PosePing,
 } = require('../models');
 
 function daysAgo(n) {
@@ -47,6 +49,8 @@ async function clearAll() {
     Pose.deleteMany({}),
     PairRequest.deleteMany({}),
     UserNotification.deleteMany({}),
+    Friendship.deleteMany({}),
+    PosePing.deleteMany({}),
   ]);
 }
 

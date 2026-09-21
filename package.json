@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.js",
     "seed": "node src/data/seed.js",
     "seed:force": "node src/data/seed.js --force",
+    "db:reset": "node src/data/resetFresh.js",
     "mongo:up": "docker start snap-mongo || docker run -d --name snap-mongo -p 27017:27017 -e MONGO_INITDB_DATABASE=snap_app mongo:7"
   },
   "dependencies": {
