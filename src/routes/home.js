@@ -10,6 +10,7 @@ const {
   ACTIVE_STATUSES,
   expireStaleSessions,
   isSessionExpired,
+  isIdlePaired,
 } = require('../services/sessionExpiry');
 
 const router = express.Router();
@@ -32,7 +33,11 @@ router.get('/', authRequired, async (req, res) => {
     }).sort({ updatedAt: -1 });
 
     let activePair = null;
-    if (activeSession && !isSessionExpired(activeSession, now)) {
+    if (
+      activeSession &&
+      !isSessionExpired(activeSession, now) &&
+      !isIdlePaired(activeSession, now)
+    ) {
       const partnerId =
         String(activeSession.hostId) === String(user._id)
           ? activeSession.guestId

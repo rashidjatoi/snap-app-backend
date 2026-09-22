@@ -4,7 +4,7 @@ const crypto = require('crypto');
 /**
  * PosePing™ — lightweight photo invitation (no live call / no WebRTC).
  * Partner responds without typing: join_now / ten_min / later.
- * After join, both tap "I'm Ready" → both_ready (still no live capture).
+ * After join, both tap "I'm Ready" → both_ready → live capture session.
  */
 const posePingSchema = new mongoose.Schema(
   {
@@ -24,6 +24,13 @@ const posePingSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
+      index: true,
+    },
+    /** Live capture session created once both users tap I'm Ready. */
+    sessionId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Session',
+      default: null,
       index: true,
     },
     /** instant | knock | invite | schedule */

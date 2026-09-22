@@ -57,6 +57,19 @@ router.post('/request', authRequired, async (req, res) => {
       return fail(res, 409, 'Already friends', 'ALREADY_FRIENDS');
     }
     if (row?.status === 'pending') {
+      // Re-send push/inbox so the recipient still gets alerted if they missed it.
+      await notifyUser({
+        userId: target._id,
+        type: 'friend_request',
+        title: `${req.user.displayName} sent a friend request`,
+        body: 'Add them to PosePing together.',
+        actions: ['accept_friend', 'decline_friend'],
+        payload: { friendshipId: row._id.toString() },
+        actor: {
+          initial: (req.user.displayName || '?')[0].toUpperCase(),
+          name: req.user.displayName,
+        },
+      });
       return ok(res, {
         friendshipId: row._id.toString(),
         status: 'pending',

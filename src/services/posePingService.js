@@ -81,6 +81,7 @@ async function pingDto(ping, req) {
     updatedAt: ping.updatedAt,
     inviteToken: ping.inviteToken,
     inviteUrl: `${base}/invite/${ping.inviteToken}`,
+    sessionId: ping.sessionId ? ping.sessionId.toString() : null,
     from: friendDto(from),
     to: friendDto(to),
   };
@@ -261,6 +262,27 @@ async function respondToPing({ ping, responder, response, req }) {
 async function markReady({ ping, user, req }) {
   await refreshDelayedReady(ping);
 
+  // Allow repairing a both_ready ping that never got a capture session.
+  if (
+    ping.status === 'both_ready' &&
+    !ping.sessionId &&
+    ping.fromReady &&
+    ping.toReady &&
+    ping.toUserId
+  ) {
+    const { createSessionForHost } = require('./sessionService');
+    const host = await User.findById(ping.fromUserId);
+    if (host) {
+      const session = await createSessionForHost(host, { privacy: 'private' });
+      session.guestId = ping.toUserId;
+      session.status = 'paired';
+      await session.save();
+      ping.sessionId = session._id;
+      await ping.save();
+    }
+    return pingDto(ping, req);
+  }
+
   if (!['waiting_ready', 'joining', 'ready'].includes(ping.status)) {
     const err = new Error('PosePing is not waiting for ready');
     err.status = 409;
@@ -285,17 +307,36 @@ async function markReady({ ping, user, req }) {
 
   if (ping.fromReady && ping.toReady) {
     ping.status = 'both_ready';
+
+    // Open the live dual-camera session so both can take photo/video together.
+    if (!ping.sessionId && ping.toUserId) {
+      const { createSessionForHost } = require('./sessionService');
+      const host = await User.findById(ping.fromUserId);
+      if (host) {
+        const session = await createSessionForHost(host, { privacy: 'private' });
+        session.guestId = ping.toUserId;
+        session.status = 'paired';
+        await session.save();
+        ping.sessionId = session._id;
+      }
+    }
+
     await ping.save();
 
-    const otherId = isFrom ? ping.toUserId : ping.fromUserId;
-    if (otherId) {
+    const sessionId = ping.sessionId ? ping.sessionId.toString() : null;
+    const targets = [ping.fromUserId, ping.toUserId].filter(Boolean);
+    for (const uid of targets) {
+      if (String(uid) === String(user._id)) continue;
       await notifyUser({
-        userId: otherId,
-        type: 'pose_ping',
+        userId: uid,
+        type: sessionId ? 'session_started' : 'pose_ping',
         title: '🟢 BOTH READY',
-        body: 'You’re both set for a HoldPose moment.',
-        actions: [],
-        payload: { posePingId: ping._id.toString() },
+        body: 'Open the pose camera — take a photo or video together.',
+        actions: sessionId ? ['join_session'] : [],
+        payload: {
+          posePingId: ping._id.toString(),
+          ...(sessionId ? { sessionId } : {}),
+        },
         actor: actorFrom(user),
       });
     }

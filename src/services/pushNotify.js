@@ -29,25 +29,64 @@ async function notifyUser({
     initFirebase();
     const user = await User.findById(userId).select('fcmTokens');
     const tokens = (user?.fcmTokens || []).filter(Boolean);
-    if (!tokens.length) return doc;
+    if (!tokens.length) {
+      console.warn(
+        `FCM skipped: no device tokens for user ${userId} (type=${type})`,
+      );
+      return doc;
+    }
+
+    const data = {
+      type: String(type || ''),
+      title: String(title || ''),
+      body: String(body || ''),
+      notificationId: String(doc._id),
+      click_action: 'FLUTTER_NOTIFICATION_CLICK',
+      ...Object.fromEntries(
+        Object.entries(payload || {}).map(([k, v]) => [k, String(v ?? '')]),
+      ),
+    };
 
     const message = {
-      notification: { title, body },
-      data: {
-        type: String(type || ''),
-        notificationId: String(doc._id),
-        ...Object.fromEntries(
-          Object.entries(payload || {}).map(([k, v]) => [k, String(v ?? '')]),
-        ),
-      },
       tokens,
+      notification: {
+        title: String(title || 'HoldPose'),
+        body: String(body || ''),
+      },
+      data,
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'holdpose_push',
+          sound: 'default',
+          defaultSound: true,
+          defaultVibrateTimings: true,
+          priority: 'high',
+          clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            sound: 'default',
+            badge: 1,
+          },
+        },
+      },
     };
 
     const result = await admin.messaging().sendEachForMulticast(message);
+    console.log(
+      `FCM ${type} → user ${userId}: success=${result.successCount} failure=${result.failureCount}`,
+    );
+
     if (result.failureCount > 0) {
       const invalid = [];
       result.responses.forEach((r, i) => {
         if (!r.success) {
+          console.warn(
+            `FCM token failed [${i}]: ${r.error?.code || ''} ${r.error?.message || ''}`,
+          );
           const code = r.error?.code || '';
           if (
             code.includes('registration-token-not-registered') ||
