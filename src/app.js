@@ -65,7 +65,7 @@ function createApp() {
     });
   });
 
-  // Also support health without /api prefix (Vercel root)
+  // Also support health without /api prefix
   app.get('/health', (_req, res) => {
     res.json({
       success: true,
@@ -77,6 +77,28 @@ function createApp() {
       },
     });
   });
+
+  // WebRTC ICE config (STUN always; TURN when TURN_HOST is set on the host).
+  const iceHandler = (_req, res) => {
+    const iceServers = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+    ];
+    const turnHost = String(process.env.TURN_HOST || '').trim();
+    if (turnHost) {
+      iceServers.push({
+        urls: [
+          `turn:${turnHost}:3478?transport=tcp`,
+          `turn:${turnHost}:3478?transport=udp`,
+        ],
+        username: process.env.TURN_USER || 'snap',
+        credential: process.env.TURN_PASS || 'snapturn',
+      });
+    }
+    res.json({ success: true, data: { iceServers } });
+  };
+  app.get('/api/webrtc/ice', iceHandler);
+  app.get('/api/v1/webrtc/ice', iceHandler);
 
   const sessionRoutes = require('./routes/sessions');
   const stitchJobRoutes = require('./routes/stitchJobs');

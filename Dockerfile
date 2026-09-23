@@ -1,4 +1,4 @@
-# HoldPose API — Cloud Run / Docker Hub
+# HoldPose API — DigitalOcean App Platform / Docker
 FROM node:20-bookworm-slim
 
 RUN apt-get update \

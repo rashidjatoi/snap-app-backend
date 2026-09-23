@@ -8,7 +8,7 @@ const { Session } = require('../models');
  * Concurrent ICE/offer posts from both peers were throwing VersionError.
  */
 async function appendSignal(sessionId, { type, fromUserId, payload }) {
-  // Never persist latency probes — they flooded Cloud Run clients and Mongo.
+  // Never persist latency probes — they flooded API clients and Mongo.
   if (type === 'latency.ping' || type === 'latency.pong') {
     return {
       session: await Session.findById(sessionId),
