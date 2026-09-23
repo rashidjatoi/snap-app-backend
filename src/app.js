@@ -29,6 +29,18 @@ function createApp() {
   app.use(express.json({ limit: '2mb' }));
   app.use(morgan('dev'));
 
+  app.get('/', (_req, res) => {
+    res.json({
+      success: true,
+      data: {
+        service: 'snap-app-api',
+        status: 'ok',
+        db: 'mongodb',
+        time: new Date().toISOString(),
+      },
+    });
+  });
+
   app.get('/api/health', (_req, res) => {
     res.json({
       success: true,
