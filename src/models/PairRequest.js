@@ -6,7 +6,7 @@ const pairRequestSchema = new mongoose.Schema(
     toUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     status: {
       type: String,
-      enum: ['pending', 'accepted', 'declined', 'expired'],
+      enum: ['pending', 'accepted', 'declined', 'expired', 'cancelled'],
       default: 'pending',
     },
     sessionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Session', default: null },

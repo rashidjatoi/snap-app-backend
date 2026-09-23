@@ -202,9 +202,33 @@ router.post('/:sessionId/end', authRequired, async (req, res) => {
   try {
     const session = await Session.findById(req.params.sessionId);
     if (!session) return fail(res, 404, 'Session not found', 'SESSION_NOT_FOUND');
+    const uid = String(req.user._id);
     session.status = 'ended';
     session.endedAt = new Date();
     await session.save();
+
+    try {
+      const { appendSignal } = require('./signaling');
+      const { session: updated, signal } = await appendSignal(session._id, {
+        type: 'peer.left',
+        fromUserId: uid,
+        payload: { reason: req.body?.reason || 'user_exit' },
+      });
+      if (typeof _broadcast === 'function' && updated && signal) {
+        _broadcast(
+          updated._id.toString(),
+          {
+            ...signal,
+            sessionId: updated._id.toString(),
+            createdAt: signal.createdAt.toISOString(),
+          },
+          uid,
+        );
+      }
+    } catch (sigErr) {
+      console.warn('peer.left on end failed:', sigErr.message);
+    }
+
     return ok(res, { ended: true, reason: req.body?.reason || 'user_exit' });
   } catch (err) {
     return fail(res, 500, err.message || 'Failed to end session');

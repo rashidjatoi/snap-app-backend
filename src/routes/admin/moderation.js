@@ -88,6 +88,70 @@ router.get('/snaps', async (req, res) => {
   }
 });
 
+router.get('/poses', async (req, res) => {
+  try {
+    const { Pose } = require('../../models');
+    const filter = {};
+    if (req.query.mediaType) filter.mediaType = req.query.mediaType;
+    const poses = await Pose.find(filter).sort({ createdAt: -1 }).limit(200);
+    const list = poses.map((p) => ({
+      id: p._id.toString(),
+      poseId: p.poseId,
+      sessionId: p.sessionId?.toString?.() || p.sessionId,
+      mediaType: p.mediaType,
+      mediaUrl: p.mediaUrl,
+      peerMediaUrl: p.peerMediaUrl,
+      thumbnailUrl: p.thumbnailUrl,
+      durationSec: p.durationSec,
+      partnersLabel: p.partnersLabel,
+      partners: p.partners,
+      shareUrl: p.shareUrl,
+      confirmed: p.confirmed,
+      ownerIds: (p.ownerIds || []).map((id) => id.toString()),
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+    }));
+    return ok(res, { poses: list });
+  } catch (err) {
+    console.error(err);
+    return fail(res, 500, 'Failed to load poses');
+  }
+});
+
+router.patch('/poses/:id', async (req, res) => {
+  try {
+    const { Pose } = require('../../models');
+    const { action } = req.body || {};
+    const pose =
+      (await Pose.findOne({ poseId: req.params.id })) ||
+      (await Pose.findById(req.params.id).catch(() => null));
+    if (!pose) return fail(res, 404, 'Pose not found');
+
+    if (action === 'remove') {
+      // Soft-remove by clearing public share + unconfirm
+      pose.confirmed = false;
+      pose.shareUrl = null;
+      await pose.save();
+      return ok(res, {
+        pose: {
+          id: pose._id.toString(),
+          poseId: pose.poseId,
+          confirmed: pose.confirmed,
+          shareUrl: pose.shareUrl,
+        },
+      });
+    }
+    if (action === 'delete') {
+      await Pose.deleteOne({ _id: pose._id });
+      return ok(res, { deleted: true, poseId: pose.poseId });
+    }
+    return fail(res, 400, 'action must be remove or delete');
+  } catch (err) {
+    console.error(err);
+    return fail(res, 500, 'Failed to update pose');
+  }
+});
+
 router.patch('/snaps/:id', async (req, res) => {
   try {
     const { status } = req.body || {};

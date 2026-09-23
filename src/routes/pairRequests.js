@@ -85,9 +85,56 @@ router.post('/:id/decline', authRequired, async (req, res) => {
     }
     pr.status = 'declined';
     await pr.save();
+
+    await notifyUser({
+      userId: pr.fromUserId,
+      type: 'pair_request_declined',
+      title: `${req.user.displayName} declined your request`,
+      body: 'The pose request was cancelled.',
+      actions: [],
+      payload: { pairRequestId: pr._id.toString(), status: 'declined' },
+      actor: {
+        initial: (req.user.displayName || '?')[0].toUpperCase(),
+        name: req.user.displayName,
+      },
+    });
+
     return ok(res, { declined: true });
   } catch (err) {
     return fail(res, 500, err.message || 'Decline failed');
+  }
+});
+
+/** Sender cancels a pending pair request — clears for both sides. */
+router.post('/:id/cancel', authRequired, async (req, res) => {
+  try {
+    const pr = await PairRequest.findById(req.params.id);
+    if (!pr) return fail(res, 404, 'Pair request not found', 'PAIR_REQUEST_NOT_FOUND');
+    if (String(pr.fromUserId) !== String(req.user._id)) {
+      return fail(res, 403, 'Only the sender can cancel');
+    }
+    if (!['pending'].includes(pr.status)) {
+      return ok(res, { cancelled: true, status: pr.status });
+    }
+    pr.status = 'cancelled';
+    await pr.save();
+
+    await notifyUser({
+      userId: pr.toUserId,
+      type: 'pair_request_cancelled',
+      title: `${req.user.displayName} cancelled the request`,
+      body: 'The pose request is no longer active.',
+      actions: [],
+      payload: { pairRequestId: pr._id.toString(), status: 'cancelled' },
+      actor: {
+        initial: (req.user.displayName || '?')[0].toUpperCase(),
+        name: req.user.displayName,
+      },
+    });
+
+    return ok(res, { cancelled: true });
+  } catch (err) {
+    return fail(res, 500, err.message || 'Cancel failed');
   }
 });
 

@@ -59,6 +59,15 @@ const userSchema = new mongoose.Schema(
     },
     resetToken: { type: String, default: null },
     resetTokenExpiresAt: { type: Date, default: null },
+    /** 6-digit email OTP for verify / password reset */
+    emailOtp: { type: String, default: null },
+    emailOtpExpiresAt: { type: Date, default: null },
+    emailOtpPurpose: {
+      type: String,
+      enum: ['verify', 'reset', null],
+      default: null,
+    },
+    emailOtpResendAt: { type: Date, default: null },
     fcmTokens: { type: [String], default: [] },
     lastActiveAt: { type: Date, default: Date.now },
   },
